@@ -745,7 +745,7 @@ async function loadFromSupabase(){
     Object.values(g).forEach(r=>stockDB.push(r));
 
     // plans
-    const {data:plRows}=await sb.from('plans').select('*').order('created_at',{ascending:false});
+    const {data:plRows}=await sb.from('wholesale_plans').select('*').order('created_at',{ascending:false});
     if(plRows){
       plans.length=0;
       plRows.forEach(p=>plans.push({
@@ -755,11 +755,23 @@ async function loadFromSupabase(){
       }));
     }
 
-    // incoming
-    const {data:incRows}=await sb.from('incoming').select('*').order('created_at',{ascending:false});
-    if(incRows){
+    // incoming (read-only from swiss_orders + swiss_order_items)
+    const {data:soRows}=await sb.from('swiss_orders').select('id,order_no,delivery_due_date,notes,swiss_order_items(id,product_id,product_name_en,qty)').not('status','in','("completed","cancelled")').order('created_at',{ascending:false});
+    if(soRows){
       incoming.length=0;
-      incRows.forEach(r=>incoming.push(r));
+      soRows.forEach(o=>{
+        (o.swiss_order_items||[]).forEach(item=>{
+          const prod=PRODUCT_DB[item.product_id];
+          incoming.push({
+            id:item.id,
+            code:item.product_id||'',
+            name:prod?.name||item.product_name_en||'',
+            qty:Number(item.qty||0),
+            date:o.delivery_due_date||'',
+            memo:o.notes||''
+          });
+        });
+      });
     }
 
     renderDashboard();
@@ -773,7 +785,7 @@ async function loadFromSupabase(){
 // -- Supabase 동기화 --
 async function sbUpsertPlan(pl){
   if(!sb) return;
-  const {error}=await sb.from('plans').upsert({
+  const {error}=await sb.from('wholesale_plans').upsert({
     id:pl.id,channel:pl.channel,person:pl.person||'',
     from_date:pl.from||'',to_date:pl.to||'',
     memo:pl.memo||'',status:pl.status||'진행예정',items:pl.items||[]
@@ -782,19 +794,12 @@ async function sbUpsertPlan(pl){
 }
 async function sbDeletePlan(id){
   if(!sb) return;
-  const {error}=await sb.from('plans').delete().eq('id',id);
+  const {error}=await sb.from('wholesale_plans').delete().eq('id',id);
   if(error) console.error('plan delete error:',error);
 }
-async function sbUpsertInc(inc){
-  if(!sb) return;
-  const {error}=await sb.from('incoming').upsert(inc);
-  if(error) console.error('incoming sync error:',error);
-}
-async function sbDeleteInc(id){
-  if(!sb) return;
-  const {error}=await sb.from('incoming').delete().eq('id',id);
-  if(error) console.error('incoming delete error:',error);
-}
+// sbUpsertInc / sbDeleteInc: no-op (swiss_orders are read-only from this admin tool)
+async function sbUpsertInc(inc){}
+async function sbDeleteInc(id){}
 
 // -- 기존 함수 오버라이드 --
 const _savePlan=savePlan;
@@ -832,7 +837,7 @@ saveAll=async function(){
   if(!sb){ toast('Supabase 연결 없음'); return; }
   try{
     for(const p of plans) await sbUpsertPlan(p);
-    for(const i of incoming) await sbUpsertInc(i);
+    // incoming is read-only (swiss_orders managed elsewhere)
     toast('클라우드 저장 완료');
   }catch(e){ console.error(e); toast('저장 실패'); }
 };
