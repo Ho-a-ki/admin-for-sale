@@ -291,7 +291,10 @@ function doPaste(){
   if(!text) return alert('내용이 없습니다');
   let added=0, notFound=[];
   text.split('\n').filter(l=>l.trim()).forEach(line=>{
-    const cols=line.split('\t');
+    let cols=line.split('\t');
+    if(cols.length<2) cols=line.trim().split(/\s{2,}/);
+    if(cols.length<2) cols=line.trim().split(/[,;]/);
+    if(cols.length<2) cols=line.trim().split(/\s+/);
     const code=(cols[0]||'').trim();
     const qty=Number((cols[1]||'').replace(/[^0-9]/g,''));
     if(!code||!qty) return;
@@ -499,7 +502,10 @@ function doSoldPaste(planId,safeId){
 
   let matched=0, notFound=[];
   text.split('\n').filter(l=>l.trim()).forEach(line=>{
-    const cols=line.split('\t');
+    let cols=line.split('\t');
+    if(cols.length<2) cols=line.trim().split(/\s{2,}/);
+    if(cols.length<2) cols=line.trim().split(/[,;]/);
+    if(cols.length<2) cols=line.trim().split(/\s+/);
     const code=(cols[0]||'').trim();
     const qty=Number((cols[1]||'').replace(/[^0-9]/g,''));
     if(!code||!qty) return;
@@ -540,7 +546,10 @@ function doIncPaste(){
   if(!text) return alert('내용이 없습니다');
   let added=0, notFound=[];
   text.split('\n').filter(l=>l.trim()).forEach(line=>{
-    const cols=line.split('\t');
+    let cols=line.split('\t');
+    if(cols.length<2) cols=line.trim().split(/\s{2,}/);
+    if(cols.length<2) cols=line.trim().split(/[,;]/);
+    if(cols.length<2) cols=line.trim().split(/\s+/);
     const code=(cols[0]||'').trim();
     const qty=Number((cols[1]||'').replace(/[^0-9]/g,''));
     const date=(cols[2]||'').trim();
