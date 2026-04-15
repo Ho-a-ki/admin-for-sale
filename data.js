@@ -1,7 +1,4 @@
-/* ── data.js ── empty initializers (all data loads from Supabase) ── */
+/* ── data.js ── 빈 초기화 (모든 데이터는 Supabase에서 로드) ── */
 const PRODUCT_DB = {};
-const STOCK_RAW  = [];
-let stockDB  = [];
-let plans    = [];
-let incoming = [];
-let rowIdx   = 0;
+let plans = [];
+let rowIdx = 0;
