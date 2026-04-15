@@ -121,7 +121,7 @@ function renderPlanList(){
 function addToSet(p){
   const existing=currentSet.items.find(i=>i.code===p.code);
   if(existing){ existing.qty+=1; }
-  else currentSet.items.push({code:p.code,name:p.name,price:p.price,qty:1});
+  else currentSet.items.push({code:p.code,name:p.name,price:p.price,qty:1,gift:false});
   renderSetItems(); updateSummary();
 }
 function renderSetItems(){
@@ -131,13 +131,18 @@ function renderSetItems(){
   const setQty=parseInt(document.getElementById('setQtyInput')?.value)||1;
   list.innerHTML=currentSet.items.map((item,idx)=>{
     const needed=item.qty*setQty;
-    return `<div class="set-item">
-      <div class="set-item-num">${idx+1}</div>
+    const giftOn=!!item.gift;
+    return `<div class="set-item" style="${giftOn?'background:#fffbeb;border-color:#fde68a':''}">
+      <div class="set-item-num" style="${giftOn?'background:#92400e':''}">${idx+1}</div>
       <div class="set-item-info">
         <div class="set-item-code">${esc(item.code)}</div>
-        <div class="set-item-name">${esc(item.name)}</div>
-        <div class="set-item-price">${fmt(item.price)}</div>
+        <div class="set-item-name">${esc(item.name)}${giftOn?' <span class="tag" style="background:#fef3c7;color:#92400e;margin-left:4px">🎁 증정</span>':''}</div>
+        <div class="set-item-price" style="${giftOn?'text-decoration:line-through;color:var(--muted)':''}">${fmt(item.price)}</div>
       </div>
+      <label class="text-center" style="min-width:44px;cursor:pointer;user-select:none">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">증정</div>
+        <input type="checkbox" ${giftOn?'checked':''} onchange="toggleGift(${idx},this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#92400e">
+      </label>
       <div class="text-center" style="min-width:44px">
         <div style="font-size:10px;color:var(--muted);margin-bottom:2px">세트당</div>
         <input type="number" class="set-item-qty" value="${item.qty}" min="1" onchange="updateQty(${idx},this.value)">
@@ -149,6 +154,10 @@ function renderSetItems(){
       <button class="set-item-remove" onclick="removeFromSet(${idx})">×</button>
     </div>`;
   }).join('');
+}
+function toggleGift(idx,on){
+  currentSet.items[idx].gift=!!on;
+  renderSetItems(); updateSummary();
 }
 function updateQty(idx,val){
   currentSet.items[idx].qty=parseInt(val)||1;
@@ -168,10 +177,11 @@ function clearCurrentSet(){
   renderSetItems(); updateSummary(); renderSavedSets();
 }
 function updateSummary(){
-  const total=currentSet.items.reduce((s,i)=>s+i.price*i.qty,0);
+  const total=currentSet.items.reduce((s,i)=>s+(i.gift?0:i.price*i.qty),0);
   const disc=parseInt(document.getElementById('discountRate').value)||0;
   const sale=Math.round(total*(1-disc/100));
-  document.getElementById('sumItemCount').textContent=currentSet.items.length+' 종';
+  const giftCount=currentSet.items.filter(i=>i.gift).length;
+  document.getElementById('sumItemCount').textContent=currentSet.items.length+' 종'+(giftCount?` (증정 ${giftCount}종)`:'');
   document.getElementById('sumRetail').textContent=total.toLocaleString()+'원';
   document.getElementById('sumSalePrice').textContent=sale.toLocaleString()+'원';
 }
@@ -183,11 +193,11 @@ function saveCurrentSet(){
   if(currentSet.items.length===0) return alert('제품을 추가하세요.');
   const disc=parseInt(document.getElementById('discountRate').value)||0;
   const setQty=parseInt(document.getElementById('setQtyInput').value)||1;
-  const total=currentSet.items.reduce((s,i)=>s+i.price*i.qty,0);
+  const total=currentSet.items.reduce((s,i)=>s+(i.gift?0:i.price*i.qty),0);
   const existingId = currentSetIdx>=0 ? savedSets[currentSetIdx].id : uid();
   const setObj={
     id:existingId, name,
-    items:currentSet.items.map(i=>({code:i.code,name:i.name,price:i.price,qty:i.qty})),
+    items:currentSet.items.map(i=>({code:i.code,name:i.name,price:i.price,qty:i.qty,gift:!!i.gift})),
     discount:disc, setQty,
     retail:total, sale:Math.round(total*(1-disc/100))
   };
@@ -286,11 +296,12 @@ function buildLogistics(){
         merged[item.code]={
           name:item.name, price:item.price,
           cat:prod?.cat||'—',
-          total:0, sources:[]
+          total:0, paidTotal:0, sources:[]
         };
       }
       merged[item.code].total+=needed;
-      merged[item.code].sources.push(`${s.name}×${sq}(${item.qty}개)`);
+      if(!item.gift) merged[item.code].paidTotal+=needed;
+      merged[item.code].sources.push(`${s.name}×${sq}(${item.qty}개${item.gift?' 🎁':''})`);
     });
   });
 
@@ -305,7 +316,8 @@ function buildLogistics(){
   const tfoot=document.getElementById('logTfoot');
   let gTotal=0,gAmt=0,lastCat=null;
   tbody.innerHTML=sorted.map(([code,d])=>{
-    const amt=d.price*d.total; gTotal+=d.total; gAmt+=amt;
+    const amt=d.price*(d.paidTotal||0); gTotal+=d.total; gAmt+=amt;
+    const giftQty=d.total-(d.paidTotal||0);
     let catRow='';
     if(d.cat!==lastCat){
       lastCat=d.cat;
@@ -316,7 +328,7 @@ function buildLogistics(){
       <td class="fw6">${esc(d.name)}</td>
       <td>${esc(d.cat)}</td>
       <td style="font-family:ui-monospace,monospace;text-align:right">${d.price.toLocaleString()}</td>
-      <td style="font-family:ui-monospace,monospace;font-size:15px;font-weight:700;text-align:center;color:var(--blue)">${d.total}</td>
+      <td style="font-family:ui-monospace,monospace;font-size:15px;font-weight:700;text-align:center;color:var(--blue)">${d.total}${giftQty?`<div style="font-size:10px;font-weight:500;color:#92400e">🎁 ${giftQty}</div>`:''}</td>
       <td style="font-family:ui-monospace,monospace;text-align:right">${amt.toLocaleString()}</td>
       <td style="font-size:11px;color:var(--muted)">${esc(d.sources.join(' / '))}</td>
     </tr>`;
@@ -342,10 +354,10 @@ function exportLogisticsCSV(){
   sets.forEach(s=>{ csv+=`"${s.name}",${s.setQty||1},${s.items.length},${s.discount||0}%,${s.sale||0}\n`; });
   csv+='\n=== 관리코드별 필요수량 합산 ===\n관리코드,제품명,카테고리,단가,필요수량,금액소계,세트출처\n';
   sorted.forEach(([code,d])=>{
-    csv+=`${code},"${d.name}",${d.cat},${d.price},${d.total},${d.price*d.total},"${d.sources.join(' / ')}"\n`;
+    csv+=`${code},"${d.name}",${d.cat},${d.price},${d.total},${d.price*(d.paidTotal||0)},"${d.sources.join(' / ')}"\n`;
   });
   const gt=sorted.reduce((s,[,d])=>s+d.total,0);
-  const ga=sorted.reduce((s,[,d])=>s+d.price*d.total,0);
+  const ga=sorted.reduce((s,[,d])=>s+d.price*(d.paidTotal||0),0);
   csv+=`,,,,합계,${gt},${ga}\n`;
   downloadFile(`유스트_물류취합_${today}.csv`, csv, 'text/csv;charset=utf-8');
 }
@@ -362,16 +374,17 @@ function renderSummary(){
         const prod=PRODUCT_DB[item.code];
         merged[item.code]={
           name:item.name, price:item.price, cat:prod?.cat||'—',
-          total:0, breakdown:[]
+          total:0, paidTotal:0, breakdown:[]
         };
       }
       merged[item.code].total+=needed;
-      merged[item.code].breakdown.push({setName:s.name, setQty:sq, perSet:item.qty, total:needed, discount:s.discount||0});
+      if(!item.gift) merged[item.code].paidTotal+=needed;
+      merged[item.code].breakdown.push({setName:s.name, setQty:sq, perSet:item.qty, total:needed, discount:s.discount||0, gift:!!item.gift});
     });
   });
   let rows=Object.entries(merged).map(([code,d])=>({code,...d}));
   const totalAll=rows.reduce((s,r)=>s+r.total,0);
-  const amtAll=rows.reduce((s,r)=>s+r.total*r.price,0);
+  const amtAll=rows.reduce((s,r)=>s+(r.paidTotal||0)*r.price,0);
   if(q) rows=rows.filter(r=>r.name.toLowerCase().includes(q)||r.code.toLowerCase().includes(q));
   rows.sort((a,b)=>b.total-a.total);
 
@@ -384,12 +397,14 @@ function renderSummary(){
   if(!rows.length){ el.innerHTML='<div class="empty">'+(savedSets.length?'검색 결과 없음':'저장된 세트가 없습니다')+'</div>'; return; }
 
   el.innerHTML=rows.map(r=>{
-    const amt=r.total*r.price;
+    const amt=(r.paidTotal||0)*r.price;
+    const giftQty=r.total-(r.paidTotal||0);
     const breakdown=r.breakdown.map(b=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid #f3f4f6;font-size:12px">
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid #f3f4f6;font-size:12px${b.gift?';background:#fffbeb':''}">
         <span style="font-weight:500">${esc(b.setName)}</span>
+        ${b.gift?'<span class="tag" style="background:#fef3c7;color:#92400e">🎁 증정</span>':''}
         <span style="color:var(--muted);font-size:11px">세트당 ${b.perSet}개 × ${b.setQty}세트</span>
-        ${b.discount>0?`<span class="tag tag-c">할인 ${b.discount}%</span>`:''}
+        ${b.discount>0&&!b.gift?`<span class="tag tag-c">할인 ${b.discount}%</span>`:''}
         <span style="margin-left:auto;font-family:ui-monospace,monospace;font-weight:700;color:var(--blue)">${b.total}개</span>
       </div>`).join('');
     return `<div class="card" style="margin-bottom:10px;overflow:hidden">
@@ -399,7 +414,7 @@ function renderSummary(){
         ${r.cat?`<span class="tag tag-c">${esc(r.cat)}</span>`:''}
         <span style="font-size:11px;color:var(--muted)">${r.breakdown.length}개 세트</span>
         <div class="spacer"></div>
-        <span style="font-size:15px;font-weight:700;color:var(--blue);font-family:ui-monospace,monospace">${r.total}개</span>
+        <span style="font-size:15px;font-weight:700;color:var(--blue);font-family:ui-monospace,monospace">${r.total}개${giftQty?` <span style="font-size:11px;color:#92400e">(🎁${giftQty})</span>`:''}</span>
         <span style="font-size:12px;color:var(--purple);font-weight:600">${amt.toLocaleString()}원</span>
       </div>
       <div>${breakdown}</div>
@@ -468,10 +483,12 @@ async function loadFromSupabase(){
         const items=p.items||[];
         const retail=items.reduce((s,i)=>s+Number(i.price||0)*Number(i.qty||0),0);
         const sale=Math.round(retail*(1-(meta.discount||0)/100));
+        const retailNoGift=items.reduce((s,i)=>s+(i.gift?0:Number(i.price||0)*Number(i.qty||0)),0);
+        const saleCalc=Math.round(retailNoGift*(1-(meta.discount||0)/100));
         savedSets.push({
           id:p.id, name:p.channel||'(이름없음)',
-          items:items.map(i=>({code:i.code,name:i.name,price:Number(i.price)||0,qty:Number(i.qty)||1})),
-          discount:Number(meta.discount)||0, setQty:Number(meta.setQty)||1, retail, sale
+          items:items.map(i=>({code:i.code,name:i.name,price:Number(i.price)||0,qty:Number(i.qty)||1,gift:!!i.gift})),
+          discount:Number(meta.discount)||0, setQty:Number(meta.setQty)||1, retail:retailNoGift, sale:saleCalc
         });
       });
     }
