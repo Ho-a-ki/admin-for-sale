@@ -124,3 +124,93 @@ td.td-proj-soft{background:#faf8ff;font-size:11px;color:var(--muted)}
 .paste-area textarea{width:100%;padding:8px;border:1px solid #fde68a;border-radius:4px;font-size:12px;font-family:monospace;resize:vertical;outline:none;margin-top:6px;background:#fff}
 
 .empty{text-align:center;padding:40px;color:var(--muted);font-size:12px}
+
+/* ───── TAGS (등급/상태) ───── */
+.tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:500;line-height:1.4}
+.tag-a{background:#dbeafe;color:#1e40af}
+.tag-c{background:#f3f4f6;color:#6b7280}
+.tag-active{background:#d1fae5;color:#065f46}
+.tag-soldout{background:#fee2e2;color:#991b1b}
+
+/* ───── 공통 유틸 ───── */
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.fw6{font-weight:600}
+.r{text-align:right}
+.c,.text-center{text-align:center}
+.spacer{flex:1}
+.flex{display:flex;align-items:center;gap:8px}
+.count-badge{background:var(--blue-lt);color:var(--blue);font-size:11px;padding:3px 8px;border-radius:10px;font-weight:600}
+.excel-hint{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;font-size:12px;color:#7a5c00;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.action-bar{display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap}
+.db-scroll{max-height:640px;overflow:auto}
+.db-scroll .card{border:none}
+
+/* ───── 기획 탭: 좌우 레이아웃 ───── */
+.plan-layout{display:grid;grid-template-columns:320px 1fr;gap:18px;min-height:600px}
+.cat-panel{padding:16px}
+.cat-header{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px}
+.cat-filter-btns{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.cat-filter-btn{padding:4px 10px;border:1px solid var(--border);border-radius:12px;font-size:11px;font-weight:500;cursor:pointer;background:#fff;color:var(--text);transition:.15s;font-family:inherit}
+.cat-filter-btn:hover,.cat-filter-btn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.cat-scroll{max-height:560px;overflow:auto;padding-right:4px;display:flex;flex-direction:column;gap:6px}
+.cat-section-title{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.08em;padding:10px 4px 4px;border-bottom:1px solid var(--border);margin:4px 0}
+
+/* ───── 제품 카드 (클릭해서 세트에 추가) ───── */
+.product-card{padding:10px 12px;background:#fff;border:1px solid var(--border);border-radius:6px;cursor:pointer;transition:.15s;user-select:none}
+.product-card:hover{border-color:var(--blue);box-shadow:0 2px 8px rgba(30,64,175,.1);transform:translateY(-1px)}
+.pc-code{font-family:ui-monospace,monospace;font-size:10px;color:var(--muted)}
+.pc-name{font-size:12px;font-weight:500;margin:2px 0;color:var(--text)}
+.pc-price{font-family:ui-monospace,monospace;font-size:11px;color:var(--blue);font-weight:600}
+.pc-meta{display:flex;gap:6px;align-items:center;margin-top:4px}
+
+/* ───── 세트 빌더 ───── */
+.set-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.set-name-input{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:14px;font-weight:600;outline:none}
+.set-name-input:focus{border-color:var(--blue)}
+.set-drop-zone{min-height:160px;border:2px dashed #d1d5db;border-radius:8px;padding:14px;background:#fafbfc;margin-bottom:14px}
+.set-drop-hint{text-align:center;color:var(--muted);font-size:12px;padding:40px 0}
+.set-items{display:flex;flex-direction:column;gap:6px}
+.set-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fff;border:1px solid var(--border);border-radius:6px}
+.set-item-num{width:22px;height:22px;background:var(--blue);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.set-item-info{flex:1;min-width:0}
+.set-item-code{font-family:ui-monospace,monospace;font-size:10px;color:var(--muted)}
+.set-item-name{font-size:12px;font-weight:500}
+.set-item-price{font-family:ui-monospace,monospace;font-size:11px;color:var(--blue);font-weight:600}
+.set-item-qty{width:52px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-family:ui-monospace,monospace;font-size:12px;text-align:center;outline:none}
+.set-item-qty:focus{border-color:var(--blue)}
+.set-item-remove{width:22px;height:22px;border:none;background:#fee;color:#dc2626;border-radius:4px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
+
+/* ───── 세트 요약 ───── */
+.set-summary{background:#fafbfc;border:1px solid var(--border);border-radius:6px;padding:14px 16px;margin-bottom:14px}
+.sum-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px}
+.sum-row.total{border-top:1px solid var(--border);margin-top:6px;padding-top:8px;font-weight:700;font-size:14px}
+.sum-row .label{color:var(--muted)}
+.sum-row .value{font-family:ui-monospace,monospace;color:var(--text)}
+.sum-row.total .value{color:var(--blue)}
+.discount-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.discount-label{font-size:12px;color:var(--muted);white-space:nowrap}
+.discount-input{width:60px;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-family:ui-monospace,monospace;font-size:12px;text-align:center;outline:none}
+.discount-input:focus{border-color:var(--blue)}
+
+/* ───── 저장된 세트 칩 ───── */
+.saved-set-item{padding:10px 14px;background:#fff;border:1px solid var(--border);border-radius:6px;cursor:pointer;transition:.15s;display:inline-block;min-width:170px;flex:0 0 auto}
+.saved-set-item:hover{border-color:var(--blue)}
+.saved-set-item.active{border-color:var(--blue);background:var(--blue-lt)}
+.ss-name{font-size:13px;font-weight:600}
+.ss-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.ss-price{font-family:ui-monospace,monospace;font-size:12px;color:var(--blue);font-weight:600}
+
+/* ───── 제품 DB 테이블 (정렬 헤더) ───── */
+.db-table{width:100%;border-collapse:collapse;font-size:12px}
+.db-table th{background:var(--blue);color:#fff;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;position:sticky;top:0;cursor:pointer;white-space:nowrap;z-index:1}
+.db-table th:hover{background:#1e3a8a}
+.db-table td{padding:7px 10px;border-bottom:1px solid var(--border)}
+.db-table tr:hover td{background:#f7f9ff}
+.db-table .code{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)}
+.db-table .price{font-family:ui-monospace,monospace;text-align:right}
+
+/* ───── 버튼 danger ───── */
+.btn-danger{background:#fee2e2;color:#991b1b}
+.btn-danger:hover{background:#fecaca}
+
+@media (max-width:900px){.plan-layout{grid-template-columns:1fr}}

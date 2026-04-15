@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>유스트 기획 관리</title>
+<title>유스트 공구 기획 도구</title>
 <link rel="stylesheet" href="styles.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <div id="auth-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);align-items:center;justify-content:center">
   <div style="background:var(--card);padding:40px;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.12);width:360px">
-    <h2 style="margin-bottom:8px;text-align:center;font-size:18px">기획 관리 시스템</h2>
-    <p style="text-align:center;color:var(--muted);margin-bottom:24px;font-size:13px">Just Korea</p>
+    <h2 style="margin-bottom:8px;text-align:center;font-size:18px">공구 기획 도구</h2>
+    <p style="text-align:center;color:var(--muted);margin-bottom:24px;font-size:13px">Just Korea · 유스트</p>
     <input id="auth-email" type="email" placeholder="이메일" style="width:100%;padding:10px 12px;margin-bottom:10px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
     <input id="auth-pw" type="password" placeholder="비밀번호" onkeydown="if(event.key==='Enter')doLogin()" style="width:100%;padding:10px 12px;margin-bottom:16px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
     <button onclick="doLogin()" style="width:100%;padding:11px;background:var(--blue);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600">로그인</button>
@@ -20,165 +20,195 @@
 
 <aside class="side">
   <div class="logo">
-    <h1>기획 관리 시스템</h1>
+    <h1>공구 기획 도구</h1>
     <p>Just Korea · 유스트</p>
   </div>
   <nav class="nav">
     <div class="nsec">DB</div>
-    <div class="ni on" onclick="goPage('productdb',this)">제품 DB</div>
+    <div class="ni" onclick="goPage('productdb',this)">제품 DB</div>
     <div class="nsec">기획</div>
-    <div class="ni" onclick="goPage('planning',this)">기획 (세트 구성)</div>
+    <div class="ni on" onclick="goPage('planning',this)">기획 (세트 구성)</div>
     <div class="nsec">집계</div>
     <div class="ni" onclick="goPage('logistics',this)">물류 취합</div>
     <div class="ni" onclick="goPage('summary',this)">기획상품 합산</div>
   </nav>
   <div class="side-foot">
-    <button class="save-btn" onclick="saveAll()">클라우드 저장</button>
-    <button class="save-btn" onclick="doLogout()" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5;margin-top:4px">로그아웃</button>
+    <button class="save-btn" onclick="doLogout()" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5">로그아웃</button>
   </div>
 </aside>
 
 <div class="main">
   <div class="topbar">
-    <div class="topbar-title" id="topbar-title">제품 DB</div>
+    <div class="topbar-title" id="topbar-title">기획 (세트 구성)</div>
   </div>
 
   <div class="content">
 
-    <!-- 제품 DB -->
-    <div class="page on" id="page-productdb">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12px;color:var(--muted)" id="pdb-info">유스트 전체 제품 목록</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select class="sel" id="pdb-cat" onchange="renderProductDB()">
-            <option value="">전체 카테고리</option>
-          </select>
-          <input class="search" id="pdb-q" placeholder="상품명 / 코드" oninput="renderProductDB()" style="width:200px">
-        </div>
+    <!-- ══ 제품 DB ══ -->
+    <div class="page" id="page-productdb">
+      <div class="action-bar">
+        <input type="text" class="search" id="dbSearch" placeholder="제품명 또는 코드" oninput="renderDB()" style="width:260px">
+        <select class="sel" id="dbCatFilter" onchange="renderDB()">
+          <option value="">전체 카테고리</option>
+        </select>
+        <select class="sel" id="dbStatusFilter" onchange="renderDB()">
+          <option value="">전체 상태</option>
+          <option value="활성">활성</option>
+          <option value="품절">품절</option>
+        </select>
+        <span class="count-badge" id="dbCount">0 건</span>
+        <div class="spacer"></div>
+        <button class="btn btn-outline btn-sm" onclick="exportDbCSV()">📥 CSV</button>
       </div>
-      <div class="card">
-        <div class="tbl-wrap">
-          <table>
-            <thead><tr>
-              <th>관리코드</th><th>상품명</th><th>카테고리</th>
-              <th class="r">정가</th><th class="r">박스당</th>
-            </tr></thead>
-            <tbody id="pdb-tbody"></tbody>
-          </table>
-        </div>
-        <div style="padding:8px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)" id="pdb-count"></div>
+      <div class="card db-scroll">
+        <table class="db-table" id="dbTable">
+          <thead>
+            <tr>
+              <th onclick="sortDB('code')" style="width:110px">관리코드 ↕</th>
+              <th onclick="sortDB('name')">제품명 ↕</th>
+              <th onclick="sortDB('cat')" style="width:100px">카테고리 ↕</th>
+              <th onclick="sortDB('price')" style="width:100px">판매가 ↕</th>
+              <th onclick="sortDB('status')" style="width:80px;text-align:center">상태 ↕</th>
+            </tr>
+          </thead>
+          <tbody id="dbTbody"></tbody>
+        </table>
       </div>
     </div>
 
-    <!-- 기획 (세트 구성) -->
-    <div class="page" id="page-planning">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div style="font-size:12px;color:var(--muted)">세트 + 구성품 기획 등록 → 물류/합산 자동 계산</div>
-        <button class="btn btn-primary btn-sm" onclick="openPlanModal()">+ 기획 추가</button>
+    <!-- ══ 기획 (세트 구성) ══ -->
+    <div class="page on" id="page-planning">
+      <div class="plan-layout">
+        <!-- 좌측: 제품 카탈로그 -->
+        <div class="cat-panel card">
+          <div class="cat-header">제품 카탈로그</div>
+          <input type="text" class="search" id="planSearch" placeholder="제품 검색..." oninput="renderPlanList()" style="width:100%;margin-bottom:10px">
+          <div class="cat-filter-btns" id="planCatBtns"></div>
+          <div class="cat-scroll" id="planProductList"></div>
+        </div>
+
+        <!-- 우측: 세트 빌더 -->
+        <div>
+          <!-- 저장된 세트 -->
+          <div class="card" style="padding:14px 16px;margin-bottom:14px">
+            <div class="flex" style="margin-bottom:10px">
+              <div class="cat-header" style="margin:0">저장된 세트</div>
+              <div class="spacer"></div>
+              <button class="btn btn-primary btn-sm" onclick="newSet()">+ 새 세트</button>
+            </div>
+            <div id="savedSetsList" style="display:flex;flex-wrap:wrap;gap:8px">
+              <div style="font-size:12px;color:var(--muted);padding:8px 0">저장된 세트 없음</div>
+            </div>
+          </div>
+
+          <!-- 현재 세트 편집 -->
+          <div class="card" style="padding:16px">
+            <div class="set-header">
+              <input type="text" class="set-name-input" id="setNameInput" placeholder="세트명 입력 (예: 빅스파세트)">
+              <div class="flex" style="flex-shrink:0">
+                <span style="font-size:12px;color:var(--muted);white-space:nowrap">세트 수량</span>
+                <input type="number" id="setQtyInput" value="1" min="1" style="width:70px;padding:7px 8px;border:1px solid var(--border);border-radius:5px;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;text-align:center;color:var(--blue);outline:none" oninput="renderSetItems();updateSummary()">
+                <span style="font-size:12px;color:var(--muted)">개</span>
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="clearCurrentSet()">초기화</button>
+              <button class="btn btn-primary btn-sm" onclick="saveCurrentSet()">💾 저장</button>
+            </div>
+
+            <div class="excel-hint">📌 왼쪽 카탈로그에서 제품을 클릭하면 세트에 추가됩니다.</div>
+
+            <div class="set-drop-zone">
+              <div id="setDropHint" class="set-drop-hint" style="display:none">← 제품을 추가하세요</div>
+              <div class="set-items" id="setItemsList"></div>
+            </div>
+
+            <div class="set-summary">
+              <div class="sum-row"><span class="label">구성 제품 수</span><span class="value" id="sumItemCount">0 종</span></div>
+              <div class="sum-row"><span class="label">합산 정가</span><span class="value" id="sumRetail">0원</span></div>
+              <div class="discount-row">
+                <span class="discount-label">할인율</span>
+                <input type="number" class="discount-input" id="discountRate" value="0" min="0" max="100" oninput="updateSummary()">
+                <span class="discount-label">%</span>
+              </div>
+              <div class="sum-row total"><span class="label">세트 판매가</span><span class="value" id="sumSalePrice">0원</span></div>
+            </div>
+
+            <div class="flex">
+              <div class="spacer"></div>
+              <button class="btn btn-outline btn-sm" onclick="exportSetExcel()">📊 엑셀 생성</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div id="plan-list"><div class="empty">등록된 기획이 없습니다</div></div>
     </div>
 
-    <!-- 물류 취합 -->
+    <!-- ══ 물류 취합 ══ -->
     <div class="page" id="page-logistics">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px;flex-wrap:wrap">
-        <div style="font-size:12px;color:var(--muted)">모든 기획의 구성품을 관리코드 기준으로 합산</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input class="search" id="lg-q" placeholder="상품명 / 코드" oninput="renderLogistics()" style="width:200px">
-          <button class="btn btn-outline btn-sm" onclick="copyLogistics()">표 복사</button>
-        </div>
+      <div class="excel-hint">📦 저장된 모든 세트의 구성 상품을 <strong>관리코드 기준으로 합산</strong>합니다. 물류팀 전달용입니다.</div>
+      <div class="action-bar">
+        <button class="btn btn-primary btn-sm" onclick="buildLogistics()">🔄 취합 계산</button>
+        <button class="btn btn-outline btn-sm" onclick="exportLogisticsCSV()">📥 CSV 내보내기</button>
       </div>
-      <div class="stats" style="grid-template-columns:repeat(3,1fr)">
-        <div class="stat"><div class="stat-label">합산 SKU</div><div class="stat-val" id="lg-sku">0</div><div class="stat-sub">고유 관리코드</div></div>
-        <div class="stat"><div class="stat-label">총 수량</div><div class="stat-val" id="lg-qty" style="color:var(--blue)">0</div><div class="stat-sub">전체 기획 합산</div></div>
-        <div class="stat"><div class="stat-label">기획 수</div><div class="stat-val" id="lg-plans" style="color:var(--purple)">0</div><div class="stat-sub">등록된 기획</div></div>
-      </div>
-      <div class="card">
-        <div class="tbl-wrap">
-          <table>
+
+      <!-- 세트별 현황 -->
+      <div class="card" style="padding:14px 16px;margin-bottom:14px">
+        <div class="cat-header" style="margin-bottom:12px">세트별 기획 현황</div>
+        <div class="db-scroll" style="max-height:240px">
+          <table class="db-table">
             <thead><tr>
-              <th>관리코드</th><th>상품명</th><th>카테고리</th>
-              <th class="r">정가</th>
-              <th class="r th-avail">총 수량</th>
-              <th class="r">참여 기획</th>
+              <th style="width:200px">세트명</th>
+              <th style="width:80px;text-align:center">세트수량</th>
+              <th style="width:60px;text-align:center">구성종</th>
+              <th style="width:80px">할인율</th>
+              <th style="width:110px">세트판매가</th>
+              <th>구성 제품</th>
             </tr></thead>
-            <tbody id="lg-tbody"></tbody>
+            <tbody id="logSetTbody"></tbody>
           </table>
         </div>
-        <div style="padding:8px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)" id="lg-count"></div>
+      </div>
+
+      <!-- 취합 결과 -->
+      <div class="card" style="padding:14px 16px">
+        <div class="flex" style="margin-bottom:12px">
+          <div class="cat-header" style="margin:0">관리코드별 필요 수량 합산</div>
+          <span class="count-badge" id="logTotalKinds">0 종</span>
+          <span class="count-badge" id="logTotalQty" style="background:#ede9fe;color:#5b21b6">총 0개</span>
+        </div>
+        <div class="db-scroll">
+          <table class="db-table" id="logTable">
+            <thead><tr>
+              <th style="width:110px">관리코드</th>
+              <th>제품명</th>
+              <th style="width:100px">카테고리</th>
+              <th style="width:90px;text-align:right">단가</th>
+              <th style="width:90px;text-align:center">필요수량</th>
+              <th style="width:110px;text-align:right">금액 소계</th>
+              <th>세트 출처</th>
+            </tr></thead>
+            <tbody id="logTbody"></tbody>
+            <tfoot id="logTfoot"></tfoot>
+          </table>
+        </div>
       </div>
     </div>
 
-    <!-- 기획상품 합산 -->
+    <!-- ══ 기획상품 합산 ══ -->
     <div class="page" id="page-summary">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div style="font-size:12px;color:var(--muted)">관리코드별로 어느 기획에서 얼마씩 가져왔는지 분해</div>
-        <input class="search" id="sm-q" placeholder="상품명 / 코드" oninput="renderSummary()" style="width:200px">
+      <div class="action-bar">
+        <button class="btn btn-primary btn-sm" onclick="renderSummary()">🔄 다시 계산</button>
+        <input type="text" class="search" id="smSearch" placeholder="제품명 / 코드" oninput="renderSummary()" style="width:220px">
       </div>
       <div class="stats" style="grid-template-columns:repeat(4,1fr)">
-        <div class="stat"><div class="stat-label">총 기획</div><div class="stat-val" id="sm-plans">0</div><div class="stat-sub">등록된 기획 수</div></div>
-        <div class="stat"><div class="stat-label">총 SKU</div><div class="stat-val" id="sm-sku" style="color:var(--green)">0</div><div class="stat-sub">고유 관리코드</div></div>
-        <div class="stat"><div class="stat-label">총 수량</div><div class="stat-val" id="sm-qty" style="color:var(--blue)">0</div><div class="stat-sub">전체 합산</div></div>
-        <div class="stat"><div class="stat-label">총 금액</div><div class="stat-val" id="sm-amt" style="color:var(--purple);font-size:20px">0</div><div class="stat-sub">정가 × 수량</div></div>
+        <div class="stat"><div class="stat-label">총 세트</div><div class="stat-val" id="smSetCount">0</div><div class="stat-sub">저장된 세트 수</div></div>
+        <div class="stat"><div class="stat-label">총 SKU</div><div class="stat-val" id="smSkuCount" style="color:var(--green)">0</div><div class="stat-sub">고유 관리코드</div></div>
+        <div class="stat"><div class="stat-label">총 필요수량</div><div class="stat-val" id="smQtyTotal" style="color:var(--blue)">0</div><div class="stat-sub">전체 합산</div></div>
+        <div class="stat"><div class="stat-label">총 금액</div><div class="stat-val" id="smAmtTotal" style="color:var(--purple);font-size:20px">0원</div><div class="stat-sub">정가 × 수량</div></div>
       </div>
-      <div id="sm-list"><div class="empty">등록된 기획이 없습니다</div></div>
+      <div id="smList"><div class="empty">저장된 세트가 없습니다</div></div>
     </div>
 
   </div>
 </div>
-</div>
-
-<!-- 기획 모달 -->
-<div class="overlay" id="modal-plan">
-  <div class="modal" style="width:640px">
-    <div class="modal-title">기획 추가</div>
-    <div class="form-2">
-      <div class="fg"><label class="fl">세트명 / 채널</label><input class="fi fi-lg" id="pl-ch" placeholder="공구, 라이브, 설 기획세트 등"></div>
-      <div class="fg"><label class="fl">담당자</label><input class="fi fi-lg" id="pl-person" placeholder="김태은"></div>
-    </div>
-    <div class="form-2">
-      <div class="fg"><label class="fl">시작일</label><input class="fi fi-lg" type="date" id="pl-from"></div>
-      <div class="fg"><label class="fl">종료일</label><input class="fi fi-lg" type="date" id="pl-to"></div>
-    </div>
-    <div class="fg"><label class="fl">메모</label><input class="fi" id="pl-memo" placeholder="세트 구성 설명, 특이사항 등" style="width:100%"></div>
-    <div class="divider"></div>
-
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span style="font-size:11px;font-weight:700;color:var(--muted)">구성품 목록</span>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-outline btn-sm" id="btn-paste-toggle" onclick="togglePaste()">붙여넣기로 입력</button>
-        <button class="btn btn-outline btn-sm" onclick="addPlanRow()">+ 행 추가</button>
-      </div>
-    </div>
-
-    <div id="paste-area" style="display:none">
-      <div class="paste-area">
-        <div style="font-size:11px;color:var(--amber);font-weight:600">컬럼 순서: 관리코드 &nbsp;|&nbsp; 수량</div>
-        <textarea id="paste-box" rows="5" placeholder="2003515	500
-2000507	300
-2003518	200"></textarea>
-        <div style="display:flex;justify-content:flex-end;margin-top:6px">
-          <button class="btn btn-primary btn-sm" onclick="doPaste()">가져오기</button>
-        </div>
-      </div>
-    </div>
-
-    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px">
-      <thead><tr>
-        <th style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;color:var(--muted);background:#fafbfc;width:130px">관리코드</th>
-        <th style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;color:var(--muted);background:#fafbfc">상품명 (자동)</th>
-        <th style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;color:var(--muted);background:#fafbfc;width:100px;text-align:right">정가 (자동)</th>
-        <th style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;color:var(--muted);background:#fafbfc;width:90px">수량</th>
-        <th style="padding:7px 10px;border-bottom:1px solid var(--border);background:#fafbfc;width:30px"></th>
-      </tr></thead>
-      <tbody id="pl-items"></tbody>
-    </table>
-    <div style="font-size:11px;color:var(--muted)">관리코드 입력 시 제품DB에서 상품명·정가 자동 매칭</div>
-    <div class="modal-foot">
-      <button class="btn btn-outline" onclick="closeModal('modal-plan')">취소</button>
-      <button class="btn btn-primary" onclick="savePlan()">저장</button>
-    </div>
-  </div>
 </div>
 
 <script src="data.js"></script>
