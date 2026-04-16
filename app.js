@@ -806,6 +806,7 @@ let CATS = [...new Set(DB.map(p => p[2]))].filter(c => c && !SKIP_CATS.has(c)).s
 const PLAN_CHANNELS = { gongu: '공구채널', live: '라이브채널' };
 
 // 저장소
+let PRODUCT_IMG = {};  // { [product_id]: img_url } — products 테이블 img_url 컬럼 매핑
 let plans = [];  // { id, name, channel, type(세트/단품), items:[{code,name,price,qty,gift}], discount, planQty, closed, createdAt }
 let currentPlanId = null;
 let currentChannel = null;
@@ -1668,10 +1669,21 @@ function loadXLSX(cb) {
   document.head.appendChild(s);
 }
 
+// rows 배열에서 특정 컬럼 값이 http URL이면 그 셀을 하이퍼링크로 변환
+function applyUrlHyperlinks(ws, rows, colIdx) {
+  rows.forEach((row, i) => {
+    const v = row[colIdx];
+    if (typeof v === 'string' && /^https?:\/\//.test(v)) {
+      const ref = XLSX.utils.encode_cell({ r: i, c: colIdx });
+      if (ws[ref]) ws[ref].l = { Target: v, Tooltip: '이미지 보기' };
+    }
+  });
+}
+
 // 관리 엑셀
 function exportMgmt(chanPlans, channel) {
   const wb = XLSX.utils.book_new();
-  const rows = [['NO','기획명','채널','유형','관리코드','상품명','유통기한','단가','세트당수량','기획수량','필요수량','증정여부','할인율','기획가(1세트)']];
+  const rows = [['NO','기획명','채널','유형','관리코드','상품명','유통기한','단가','세트당수량','기획수량','필요수량','증정여부','할인율','기획가(1세트)','이미지']];
   const merges = [];
   let rowNum = 1;
   chanPlans.forEach((p, pi) => {
@@ -1683,7 +1695,8 @@ function exportMgmt(chanPlans, channel) {
         item.code, item.name, item.selectedExp || '전체',
         item.price, item.qty, sq, item.qty * sq,
         item.gift ? '증정' : '',
-        p.discount+'%', p.sale
+        p.discount+'%', p.sale,
+        PRODUCT_IMG[item.code] || ''
       ]);
       rowNum++;
     });
@@ -1696,7 +1709,8 @@ function exportMgmt(chanPlans, channel) {
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!merges'] = merges;
-  ws['!cols'] = [5,14,10,8,12,22,12,10,8,8,8,8,8,12].map(w=>{return{wch:w}});
+  ws['!cols'] = [5,14,10,8,12,22,12,10,8,8,8,8,8,12,42].map(w=>{return{wch:w}});
+  applyUrlHyperlinks(ws, rows, 14);
   XLSX.utils.book_append_sheet(wb, ws, '관리');
   XLSX.writeFile(wb, `유스트_${channel}_관리_${today()}.xlsx`);
 }
@@ -1704,15 +1718,16 @@ function exportMgmt(chanPlans, channel) {
 // BOM 엑셀
 function exportBOM(chanPlans, channel) {
   const wb = XLSX.utils.book_new();
-  const rows = [['BOM코드','기획명','채널','구성품코드','구성품명','단가','수량','증정']];
+  const rows = [['BOM코드','기획명','채널','구성품코드','구성품명','단가','수량','증정','이미지']];
   chanPlans.forEach((p, pi) => {
     const bomCode = getBomCode(channel, pi);
     p.items.forEach(item => {
-      rows.push([bomCode, p.name, channel, item.code, item.name, item.price, item.qty, item.gift?'Y':'']);
+      rows.push([bomCode, p.name, channel, item.code, item.name, item.price, item.qty, item.gift?'Y':'', PRODUCT_IMG[item.code] || '']);
     });
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [14,16,10,12,22,10,6,6].map(w=>{return{wch:w}});
+  ws['!cols'] = [14,16,10,12,22,10,6,6,42].map(w=>{return{wch:w}});
+  applyUrlHyperlinks(ws, rows, 8);
   XLSX.utils.book_append_sheet(wb, ws, 'BOM');
   XLSX.writeFile(wb, `유스트_${channel}_BOM_${today()}.xlsx`);
 }
@@ -1729,13 +1744,14 @@ function exportLogistics(chanPlans, channel) {
     });
   });
   const wb = XLSX.utils.book_new();
-  const rows = [['관리코드','제품명','유통기한','총 필요수량']];
+  const rows = [['관리코드','제품명','유통기한','총 필요수량','이미지']];
   Object.values(merged).sort((a,b) => a.code.localeCompare(b.code) || a.exp.localeCompare(b.exp)).forEach(d => {
-    rows.push([d.code, d.name, d.exp, d.total]);
+    rows.push([d.code, d.name, d.exp, d.total, PRODUCT_IMG[d.code] || '']);
   });
-  rows.push(['','','합계', Object.values(merged).reduce((s,d)=>s+d.total,0)]);
+  rows.push(['','','합계', Object.values(merged).reduce((s,d)=>s+d.total,0), '']);
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:12}];
+  ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:12},{wch:42}];
+  applyUrlHyperlinks(ws, rows, 4);
   XLSX.utils.book_append_sheet(wb, ws, '물류');
   XLSX.writeFile(wb, `유스트_${channel}_물류_${today()}.xlsx`);
 }
@@ -2003,14 +2019,15 @@ function downloadLogisticsFromDetail(data, eventName) {
   if(!data || data.length === 0) { alert('데이터가 없습니다.'); return; }
   loadXLSX(() => {
     const wb = XLSX.utils.book_new();
-    const rows = [['관리코드','상품명','카테고리','유통기한','기획수량','증정수량']];
+    const rows = [['관리코드','상품명','카테고리','유통기한','기획수량','증정수량','이미지']];
     data.forEach(([code, d]) => {
       const exps = d.exps ? Object.keys(d.exps).sort().join(', ') : '';
-      rows.push([code, d.name, d.cat, exps || '전체', d.total||0, d.giftTotal||0]);
+      rows.push([code, d.name, d.cat, exps || '전체', d.total||0, d.giftTotal||0, PRODUCT_IMG[code] || '']);
     });
-    rows.push(['','','','합계', data.reduce((s,[,d])=>s+(d.total||0),0), data.reduce((s,[,d])=>s+(d.giftTotal||0),0)]);
+    rows.push(['','','','합계', data.reduce((s,[,d])=>s+(d.total||0),0), data.reduce((s,[,d])=>s+(d.giftTotal||0),0), '']);
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:14},{wch:10},{wch:10}];
+    ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:14},{wch:10},{wch:10},{wch:42}];
+    applyUrlHyperlinks(ws, rows, 6);
     XLSX.utils.book_append_sheet(wb, ws, '물류취합');
     XLSX.writeFile(wb, `유스트_${eventName}_물류_${today()}.xlsx`);
   });
@@ -2027,6 +2044,7 @@ function initCurrentPage() {
   else if (page === 'expiry') renderExpiry();
   else if (page === 'plan-gongu') renderPlanPage('공구채널');
   else if (page === 'integrated') renderIntegrated();
+  else if (page === 'cs') initCS();
 }
 
 // ══════════════ 인증 ══════════════
@@ -2052,7 +2070,7 @@ async function doLogout() {
 // ══════════════ Supabase 데이터 로드 ══════════════
 async function loadAllFromSupabase() {
   // 1. products → DB 배열
-  const { data: prods, error: pe } = await sb.from('products').select('id,name_ko,category,base_price,is_active');
+  const { data: prods, error: pe } = await sb.from('products').select('id,name_ko,category,base_price,is_active,img_url');
   if (pe) console.error('products load error:', pe);
   if (prods && prods.length > 0) {
     DB = prods.map(p => [
@@ -2063,6 +2081,8 @@ async function loadAllFromSupabase() {
       Math.round(Number(p.base_price) || 0),
       p.is_active ? '활성' : '품절'
     ]);
+    PRODUCT_IMG = {};
+    prods.forEach(p => { if (p.img_url) PRODUCT_IMG[p.id] = p.img_url; });
   }
 
   // 2. stock → EXPIRY, EXPIRY_DB
@@ -2108,6 +2128,216 @@ async function loadAllFromSupabase() {
 
   // 4. channel_plans → plans
   await loadPlans();
+}
+
+// ══════════════ CS 접수 (example) ══════════════
+// 임시 메모리 저장. 새로고침하면 초기화됨. 추후 Supabase cs_tickets 테이블로 교체 예정.
+let CS_DATA = [
+  { id:'cs1', date:'2026-04-12', channel:'공구채널', customer:'박지영(인플루언서)', contact:'010-1234-5678',
+    type:'배송', assignee:'유리', status:'완료',
+    desc:'4/10 배송분 중 1세트가 운송장 누락으로 미배송 됨. 재배송 요청.',
+    memo:'4/12 재발송 처리, 송장 4567-1234-9999 안내 완료.' },
+  { id:'cs2', date:'2026-04-14', channel:'자사몰', customer:'김민지', contact:'010-2222-3333',
+    type:'제품불량', assignee:'유리', status:'처리중',
+    desc:'아르니카 크림젤 100 — 펌프가 작동하지 않음. 사진 첨부함.',
+    memo:'유통기한 26/03, 동일 LOT 1건 재고 점검 요청.' },
+  { id:'cs3', date:'2026-04-15', channel:'공구채널', customer:'이수아(인플루언서)', contact:'',
+    type:'교환', assignee:'다은', status:'처리중',
+    desc:'고객이 색상 잘못 주문 — CC크림 미디움 → 라이트로 교환 요청.',
+    memo:'라이트 재고 확인 중.' },
+  { id:'cs4', date:'2026-04-16', channel:'자사몰', customer:'정현우', contact:'010-9999-1234',
+    type:'환불', assignee:'다은', status:'접수',
+    desc:'단순 변심 환불. 미개봉 상태.',
+    memo:'' },
+  { id:'cs5', date:'2026-04-16', channel:'공구채널', customer:'한소영(인플루언서)', contact:'',
+    type:'배송', assignee:'유리', status:'접수',
+    desc:'4/16 배송 예정분 출고 일정 문의.',
+    memo:'' },
+  { id:'cs6', date:'2026-04-17', channel:'기타', customer:'B2B 약국 거래처', contact:'02-555-1212',
+    type:'기타', assignee:'유리', status:'접수',
+    desc:'다음달 발주 시 샘플 동봉 가능 여부 문의.',
+    memo:'' },
+];
+
+let _csEditingId = null;
+
+function initCS() {
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('csF_date').value = today;
+  renderCS();
+}
+
+function renderCS() {
+  const q = (document.getElementById('csSearch').value || '').trim().toLowerCase();
+  const fStatus = document.getElementById('csStatusFilter').value;
+  const fChan = document.getElementById('csChanFilter').value;
+  const fType = document.getElementById('csTypeFilter').value;
+
+  const filtered = CS_DATA.filter(r => {
+    if (fStatus && r.status !== fStatus) return false;
+    if (fChan && r.channel !== fChan) return false;
+    if (fType && r.type !== fType) return false;
+    if (q) {
+      const blob = (r.customer + ' ' + r.desc + ' ' + r.assignee + ' ' + (r.memo||'')).toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => (b.date+b.id).localeCompare(a.date+a.id));
+
+  // 통계 (전체 기준)
+  document.getElementById('csStatTotal').textContent = CS_DATA.length;
+  document.getElementById('csStatNew').textContent = CS_DATA.filter(r => r.status === '접수').length;
+  document.getElementById('csStatWip').textContent = CS_DATA.filter(r => r.status === '처리중').length;
+  document.getElementById('csStatDone').textContent = CS_DATA.filter(r => r.status === '완료').length;
+  document.getElementById('csCount').textContent = filtered.length + '건';
+
+  const tbody = document.getElementById('csTbody');
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--gray3);padding:30px;">접수 내역이 없습니다.</td></tr>';
+    return;
+  }
+
+  const esc = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  tbody.innerHTML = filtered.map(r => {
+    const doneClass = r.status === '완료' ? 'cs-row-done' : '';
+    return `<tr class="${doneClass}">
+      <td style="font-size:11px;color:var(--gray2);">${esc(r.date)}</td>
+      <td style="font-size:11px;">${esc(r.channel)}</td>
+      <td style="font-weight:600;">${esc(r.customer)}</td>
+      <td style="font-size:11px;">${esc(r.type)}</td>
+      <td><div class="cs-desc-cell" onclick="showCSDetail('${r.id}')" title="클릭하여 상세보기">${esc(r.desc)}</div></td>
+      <td style="font-size:11px;">${esc(r.assignee)}</td>
+      <td style="text-align:center;"><span class="cs-status cs-status-${r.status}">${r.status}</span></td>
+      <td style="text-align:center;">
+        <select class="inp-box" style="font-size:10px;padding:3px 4px;width:80px;" onchange="changeCSStatus('${r.id}', this.value)">
+          <option value="접수" ${r.status==='접수'?'selected':''}>접수</option>
+          <option value="처리중" ${r.status==='처리중'?'selected':''}>처리중</option>
+          <option value="완료" ${r.status==='완료'?'selected':''}>완료</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" style="margin-left:4px;padding:3px 6px;font-size:10px;" onclick="editCS('${r.id}')">편집</button>
+      </td>
+      <td style="text-align:center;">
+        <button class="btn btn-danger btn-sm" style="padding:3px 6px;font-size:10px;" onclick="deleteCS('${r.id}')">×</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function openCSForm() {
+  _csEditingId = null;
+  document.getElementById('csFormTitle').textContent = '신규 CS 접수';
+  document.getElementById('csF_date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('csF_channel').value = '공구채널';
+  document.getElementById('csF_customer').value = '';
+  document.getElementById('csF_contact').value = '';
+  document.getElementById('csF_type').value = '배송';
+  document.getElementById('csF_assignee').value = '';
+  document.getElementById('csF_status').value = '접수';
+  document.getElementById('csF_desc').value = '';
+  document.getElementById('csF_memo').value = '';
+  document.getElementById('csFormWrap').style.display = 'block';
+  document.getElementById('csF_customer').focus();
+}
+
+function closeCSForm() {
+  document.getElementById('csFormWrap').style.display = 'none';
+  _csEditingId = null;
+}
+
+function editCS(id) {
+  const r = CS_DATA.find(x => x.id === id);
+  if (!r) return;
+  _csEditingId = id;
+  document.getElementById('csFormTitle').textContent = '편집 — ' + r.customer;
+  document.getElementById('csF_date').value = r.date;
+  document.getElementById('csF_channel').value = r.channel;
+  document.getElementById('csF_customer').value = r.customer;
+  document.getElementById('csF_contact').value = r.contact || '';
+  document.getElementById('csF_type').value = r.type;
+  document.getElementById('csF_assignee').value = r.assignee;
+  document.getElementById('csF_status').value = r.status;
+  document.getElementById('csF_desc').value = r.desc;
+  document.getElementById('csF_memo').value = r.memo || '';
+  document.getElementById('csFormWrap').style.display = 'block';
+  document.getElementById('csFormWrap').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function saveCS() {
+  const customer = document.getElementById('csF_customer').value.trim();
+  const desc = document.getElementById('csF_desc').value.trim();
+  if (!customer) { alert('고객/인플루언서명을 입력하세요.'); return; }
+  if (!desc) { alert('문의 내용을 입력하세요.'); return; }
+
+  const payload = {
+    date: document.getElementById('csF_date').value || new Date().toISOString().slice(0,10),
+    channel: document.getElementById('csF_channel').value,
+    customer,
+    contact: document.getElementById('csF_contact').value.trim(),
+    type: document.getElementById('csF_type').value,
+    assignee: document.getElementById('csF_assignee').value.trim(),
+    status: document.getElementById('csF_status').value,
+    desc,
+    memo: document.getElementById('csF_memo').value.trim(),
+  };
+
+  if (_csEditingId) {
+    const idx = CS_DATA.findIndex(x => x.id === _csEditingId);
+    if (idx >= 0) CS_DATA[idx] = { id:_csEditingId, ...payload };
+  } else {
+    CS_DATA.unshift({ id: 'cs' + Date.now().toString(36), ...payload });
+  }
+  closeCSForm();
+  renderCS();
+}
+
+function deleteCS(id) {
+  const r = CS_DATA.find(x => x.id === id);
+  if (!r) return;
+  if (!confirm(`삭제: ${r.customer} (${r.date})\n계속하시겠습니까?`)) return;
+  CS_DATA = CS_DATA.filter(x => x.id !== id);
+  renderCS();
+}
+
+function changeCSStatus(id, status) {
+  const r = CS_DATA.find(x => x.id === id);
+  if (!r) return;
+  r.status = status;
+  renderCS();
+}
+
+function showCSDetail(id) {
+  const r = CS_DATA.find(x => x.id === id);
+  if (!r) return;
+  const esc = s => String(s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const memoHtml = r.memo
+    ? `<div style="background:var(--gray6);padding:10px 12px;border-left:3px solid var(--gray4);font-size:12px;white-space:pre-wrap;">${esc(r.memo)}</div>`
+    : '<div style="color:var(--gray3);font-size:11px;">메모 없음</div>';
+  document.getElementById('csDetailContent').innerHTML = `
+    <div style="font-size:11px;color:var(--gray3);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">CS 상세</div>
+    <div style="font-size:18px;font-weight:700;margin-bottom:14px;">${esc(r.customer)}
+      <span class="cs-status cs-status-${r.status}" style="margin-left:8px;vertical-align:middle;">${r.status}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 12px;font-size:12px;margin-bottom:14px;">
+      <div style="color:var(--gray3);">접수일</div><div>${esc(r.date)}</div>
+      <div style="color:var(--gray3);">채널</div><div>${esc(r.channel)}</div>
+      <div style="color:var(--gray3);">유형</div><div>${esc(r.type)}</div>
+      <div style="color:var(--gray3);">담당자</div><div>${esc(r.assignee) || '—'}</div>
+      <div style="color:var(--gray3);">연락처</div><div>${esc(r.contact) || '—'}</div>
+    </div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--gray2);margin-bottom:6px;">문의 내용</div>
+    <div style="background:white;border:1px solid var(--gray5);padding:10px 12px;font-size:13px;white-space:pre-wrap;margin-bottom:14px;">${esc(r.desc)}</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--gray2);margin-bottom:6px;">처리 메모</div>
+    ${memoHtml}
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
+      <button class="btn btn-ghost btn-sm" onclick="closeCSDetail()">닫기</button>
+      <button class="btn btn-black btn-sm" onclick="closeCSDetail();editCS('${r.id}')">편집</button>
+    </div>
+  `;
+  document.getElementById('csDetailModal').style.display = 'flex';
+}
+
+function closeCSDetail() {
+  document.getElementById('csDetailModal').style.display = 'none';
 }
 
 // ══════════════ 초기화 ══════════════

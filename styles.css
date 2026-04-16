@@ -1063,3 +1063,15 @@ body[data-page="plan-gongu"] .comp-item select {
   border-radius: 0 !important;
   background: transparent !important;
 }
+
+/* ── CS 페이지 ── */
+.cs-stat { background: white; border: 1px solid var(--gray5); padding: 12px 14px; }
+.cs-stat-label { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; color: var(--gray3); text-transform: uppercase; margin-bottom: 4px; }
+.cs-stat-value { font-size: 24px; font-weight: 900; color: var(--black); }
+.cs-status { display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+.cs-status-접수 { background: var(--gray5); color: var(--gray2); }
+.cs-status-처리중 { background: var(--red-light); color: var(--red); border: 1px solid var(--red); }
+.cs-status-완료 { background: var(--black); color: white; }
+.cs-row-done td { opacity: 0.55; }
+.cs-desc-cell { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cs-desc-cell:hover { color: var(--red); text-decoration: underline; }
