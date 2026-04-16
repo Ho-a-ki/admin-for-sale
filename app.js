@@ -950,6 +950,14 @@ function initDB() {
   filterDB();
 }
 
+let dbSortState = { col: null, dir: 1 };
+
+function sortDB(col) {
+  if (dbSortState.col === col) dbSortState.dir *= -1;
+  else { dbSortState.col = col; dbSortState.dir = 1; }
+  filterDB();
+}
+
 function filterDB() {
   const q = document.getElementById('dbSearch').value.toLowerCase();
   const cat = document.getElementById('dbCat').value;
@@ -961,6 +969,18 @@ function filterDB() {
     if(abc && p[3] !== abc) return false;
     if(st && p[5] !== st) return false;
     return true;
+  });
+  if (dbSortState.col !== null) {
+    const c = dbSortState.col, d = dbSortState.dir;
+    filtered.sort((a, b) => {
+      const va = a[c], vb = b[c];
+      if (c === 4) return ((Number(va)||0) - (Number(vb)||0)) * d;
+      return String(va).localeCompare(String(vb), 'ko') * d;
+    });
+  }
+  document.querySelectorAll('#page-db .sort-ind').forEach(el => {
+    const col = Number(el.dataset.col);
+    el.textContent = dbSortState.col === col ? (dbSortState.dir === 1 ? ' ▲' : ' ▼') : '';
   });
   document.getElementById('dbCount').textContent = filtered.length + '건';
   const tbody = document.getElementById('dbTbody');
@@ -1766,19 +1786,13 @@ function closeDetail() {
   document.getElementById('detailModal').style.display = 'none';
 }
 
-// ══════════════ 네비 ══════════════
-function goPage(name) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById(`page-${name}`).classList.add('active');
-  event.currentTarget.classList.add('active');
-
-  const titles = { db:'제품 DB', expiry:'유통기한 DB', 'plan-gongu':'기획 · 공구채널', 'plan-live':'기획 · 라이브채널', integrated:'통합 기획' };
-  document.getElementById('topbarTitle').textContent = titles[name] || name;
-
-  if(name === 'expiry') renderExpiry();
-  if(name === 'plan-gongu') renderPlanPage('공구채널');
-  if(name === 'integrated') renderIntegrated();
+// ══════════════ 페이지별 초기화 ══════════════
+function initCurrentPage() {
+  const page = document.body.dataset.page;
+  if (page === 'db') initDB();
+  else if (page === 'expiry') renderExpiry();
+  else if (page === 'plan-gongu') renderPlanPage('공구채널');
+  else if (page === 'integrated') renderIntegrated();
 }
 
 // ══════════════ 인증 ══════════════
@@ -1793,7 +1807,7 @@ async function doLogin() {
   document.getElementById('auth-overlay').style.display = 'none';
   document.getElementById('app-wrap').style.display = 'flex';
   await loadAllFromSupabase();
-  initDB();
+  initCurrentPage();
 }
 
 async function doLogout() {
@@ -1869,7 +1883,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('auth-overlay').style.display = 'none';
     document.getElementById('app-wrap').style.display = 'flex';
     await loadAllFromSupabase();
-    initDB();
+    initCurrentPage();
   }
   // 세션 없으면 로그인 오버레이가 표시된 상태로 대기
 });

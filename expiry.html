@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>공구 채널 · JUST 기획 관리</title>
+<title>유통기한 DB · JUST 기획 관리</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="styles.css">
 </head>
-<body data-page="plan-gongu">
+<body data-page="expiry">
 
 <!-- ── 로그인 오버레이 ── -->
 <div id="auth-overlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
@@ -37,11 +37,11 @@
       <div class="nav-group">
         <div class="nav-group-label">데이터</div>
         <div class="nav-item" onclick="location.href='db.html'">제품 DB</div>
-        <div class="nav-item" onclick="location.href='expiry.html'">유통기한 DB</div>
+        <div class="nav-item active" onclick="location.href='expiry.html'">유통기한 DB</div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">기획</div>
-        <div class="nav-item active" onclick="location.href='index.html'">공구 채널</div>
+        <div class="nav-item" onclick="location.href='index.html'">공구 채널</div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">관리</div>
@@ -54,7 +54,7 @@
 <!-- ── 메인 ── -->
 <div class="main">
   <div class="topbar">
-    <span class="topbar-title" id="topbarTitle">기획 · 공구채널</span>
+    <span class="topbar-title" id="topbarTitle">유통기한 DB</span>
     <span class="topbar-badge" id="topbarBadge"></span>
     <div class="spacer"></div>
     <span style="font-size:10px;color:var(--gray3);">JUST Korea · 유스트</span>
@@ -62,9 +62,36 @@
   </div>
   <div class="content">
 
-    <!-- ══ 기획 · 공구채널 (JS에서 렌더) ══ -->
-    <div id="page-plan-gongu" class="page active">
-      <div id="planContent-gongu"></div>
+    <!-- ══ 유통기한 DB ══ -->
+    <div id="page-expiry" class="page active">
+      <div class="db-controls">
+        <input type="text" class="inp-box search-box" id="expSearch" placeholder="제품명 또는 코드 검색..." oninput="filterExpiry()" style="width:220px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--gray2);white-space:nowrap;">이후 유통기한</span>
+          <input type="text" class="inp-box" id="expDateFilter" placeholder="예) 2026 04" oninput="filterExpiry()" style="width:110px;">
+        </div>
+        <select class="inp-box" id="expFilter" onchange="filterExpiry()" style="width:120px;">
+          <option value="">전체</option>
+          <option value="danger">3개월 이내</option>
+          <option value="warn">6개월 이내</option>
+          <option value="ok">6개월 이상</option>
+        </select>
+        <span class="count-chip" id="expCount">0건</span>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:110px">관리코드</th>
+              <th>제품명</th>
+              <th style="width:120px;text-align:center">유통기한</th>
+              <th style="width:80px;text-align:center">재고수량</th>
+              <th style="width:80px;text-align:center">상태</th>
+            </tr>
+          </thead>
+          <tbody id="expTbody"></tbody>
+        </table>
+      </div>
     </div>
 
   </div>

@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>공구 채널 · JUST 기획 관리</title>
+<title>제품 DB · JUST 기획 관리</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="styles.css">
 </head>
-<body data-page="plan-gongu">
+<body data-page="db">
 
 <!-- ── 로그인 오버레이 ── -->
 <div id="auth-overlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
@@ -36,12 +36,12 @@
     <nav>
       <div class="nav-group">
         <div class="nav-group-label">데이터</div>
-        <div class="nav-item" onclick="location.href='db.html'">제품 DB</div>
+        <div class="nav-item active" onclick="location.href='db.html'">제품 DB</div>
         <div class="nav-item" onclick="location.href='expiry.html'">유통기한 DB</div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">기획</div>
-        <div class="nav-item active" onclick="location.href='index.html'">공구 채널</div>
+        <div class="nav-item" onclick="location.href='index.html'">공구 채널</div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">관리</div>
@@ -54,7 +54,7 @@
 <!-- ── 메인 ── -->
 <div class="main">
   <div class="topbar">
-    <span class="topbar-title" id="topbarTitle">기획 · 공구채널</span>
+    <span class="topbar-title" id="topbarTitle">제품 DB</span>
     <span class="topbar-badge" id="topbarBadge"></span>
     <div class="spacer"></div>
     <span style="font-size:10px;color:var(--gray3);">JUST Korea · 유스트</span>
@@ -62,9 +62,41 @@
   </div>
   <div class="content">
 
-    <!-- ══ 기획 · 공구채널 (JS에서 렌더) ══ -->
-    <div id="page-plan-gongu" class="page active">
-      <div id="planContent-gongu"></div>
+    <!-- ══ 제품 DB ══ -->
+    <div id="page-db" class="page active">
+      <div class="db-filters">
+        <input type="text" class="inp-box search-box" id="dbSearch" placeholder="제품명 또는 코드 검색..." oninput="filterDB()">
+        <select class="inp-box" id="dbCat" onchange="filterDB()" style="width:140px;">
+          <option value="">전체 카테고리</option>
+        </select>
+        <select class="inp-box" id="dbAbc" onchange="filterDB()" style="width:90px;">
+          <option value="">전체 등급</option>
+          <option value="A">A등급</option>
+          <option value="B">B등급</option>
+          <option value="C">C등급</option>
+        </select>
+        <select class="inp-box" id="dbStatus" onchange="filterDB()" style="width:90px;">
+          <option value="">전체 상태</option>
+          <option value="활성">활성</option>
+          <option value="품절">품절</option>
+        </select>
+        <span class="count-chip" id="dbCount">0건</span>
+      </div>
+      <div class="tbl-scroll">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:110px;cursor:pointer;user-select:none;" onclick="sortDB(0)">관리코드<span class="sort-ind" data-col="0"></span></th>
+              <th style="cursor:pointer;user-select:none;" onclick="sortDB(1)">제품명<span class="sort-ind" data-col="1"></span></th>
+              <th style="width:90px;cursor:pointer;user-select:none;" onclick="sortDB(2)">카테고리<span class="sort-ind" data-col="2"></span></th>
+              <th style="width:40px;cursor:pointer;user-select:none;" onclick="sortDB(3)">등급<span class="sort-ind" data-col="3"></span></th>
+              <th style="width:90px;text-align:right;cursor:pointer;user-select:none;" onclick="sortDB(4)">소비자가<span class="sort-ind" data-col="4"></span></th>
+              <th style="width:70px;text-align:center;cursor:pointer;user-select:none;" onclick="sortDB(5)">상태<span class="sort-ind" data-col="5"></span></th>
+            </tr>
+          </thead>
+          <tbody id="dbTbody"></tbody>
+        </table>
+      </div>
     </div>
 
   </div>

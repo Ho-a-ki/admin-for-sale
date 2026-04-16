@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>통합 기획 · JUST 기획 관리</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="integrated">
+
+<!-- ── 로그인 오버레이 ── -->
+<div id="auth-overlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
+  <div style="background:white;padding:40px 36px;border-radius:12px;width:340px;box-shadow:0 8px 40px rgba(0,0,0,0.2);">
+    <div style="text-align:center;margin-bottom:24px;">
+      <div style="font-size:28px;font-weight:900;color:#D2001A;letter-spacing:2px;">JUST</div>
+      <div style="font-size:12px;color:#888;margin-top:4px;">기획 관리 시스템 로그인</div>
+    </div>
+    <input id="auth-email" type="email" placeholder="이메일" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="auth-pw" type="password" placeholder="비밀번호" style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;margin-bottom:14px;box-sizing:border-box;" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()" style="width:100%;padding:11px;background:#D2001A;color:white;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">로그인</button>
+    <div id="auth-error" style="color:#D2001A;font-size:11px;text-align:center;margin-top:10px;min-height:16px;"></div>
+  </div>
+</div>
+
+<!-- ── 앱 ── -->
+<div id="app-wrap" style="display:none;width:100%;min-height:100vh;">
+
+<!-- ── 사이드바 ── -->
+<aside class="sidebar">
+  <div class="sidebar-overlay"></div>
+  <div class="sidebar-inner">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-main">JUST</div>
+      <div class="sidebar-logo-sub">기획 관리 시스템</div>
+    </div>
+    <nav>
+      <div class="nav-group">
+        <div class="nav-group-label">데이터</div>
+        <div class="nav-item" onclick="location.href='db.html'">제품 DB</div>
+        <div class="nav-item" onclick="location.href='expiry.html'">유통기한 DB</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">기획</div>
+        <div class="nav-item" onclick="location.href='index.html'">공구 채널</div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">관리</div>
+        <div class="nav-item active" onclick="location.href='integrated.html'">통합 기획</div>
+      </div>
+    </nav>
+  </div>
+</aside>
+
+<!-- ── 메인 ── -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title" id="topbarTitle">통합 기획</span>
+    <span class="topbar-badge" id="topbarBadge"></span>
+    <div class="spacer"></div>
+    <span style="font-size:10px;color:var(--gray3);">JUST Korea · 유스트</span>
+    <button onclick="doLogout()" style="margin-left:12px;padding:5px 12px;background:none;border:1px solid #ddd;border-radius:4px;font-size:10px;color:var(--gray2);cursor:pointer;">로그아웃</button>
+  </div>
+  <div class="content">
+
+    <!-- ══ 통합 기획 ══ -->
+    <div id="page-integrated" class="page active">
+
+      <!-- 상단: 하늘색 표 형태 합산 -->
+      <div style="background:#e8f4fd;border:1px solid #b3d9f5;padding:14px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:#1a5276;letter-spacing:1px;margin-bottom:10px;">▶ 진행중 기획 상품 합산 (증정 제외)</div>
+        <div style="overflow-x:auto;">
+          <table style="border-collapse:collapse;font-size:12px;width:100%;" id="mergedTable">
+            <thead>
+              <tr style="background:#2980b9;color:white;">
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+                <th style="padding:7px 10px;text-align:left;font-weight:700;white-space:nowrap;">상품명</th>
+                <th style="padding:7px 8px;text-align:center;font-weight:700;white-space:nowrap;width:55px;">수량</th>
+              </tr>
+            </thead>
+            <tbody id="mergedTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 하단: 공구건 단위 리스트 -->
+      <div class="card">
+        <div class="card-header flex-between">
+          <span class="card-title">공구건 리스트</span>
+          <div class="flex">
+            <select class="inp-box btn-sm" id="intChanFilter" onchange="renderIntegrated()" style="width:130px;">
+              <option value="">전체 채널</option>
+              <option value="공구채널">공구채널</option>
+            </select>
+          </div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:var(--gray6);border-bottom:2px solid var(--black);">
+              <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1px;">인플루언서</th>
+              <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1px;">채널</th>
+              <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1px;">공구기간</th>
+              <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;letter-spacing:1px;">배송시작일</th>
+              <th style="padding:9px 14px;text-align:center;font-size:10px;font-weight:700;letter-spacing:1px;">세트수</th>
+              <th style="padding:9px 14px;text-align:center;font-size:10px;font-weight:700;letter-spacing:1px;">상태</th>
+              <th style="padding:9px 14px;text-align:center;font-size:10px;font-weight:700;letter-spacing:1px;">변경</th>
+              <th style="padding:9px 14px;text-align:center;font-size:10px;font-weight:700;letter-spacing:1px;">삭제</th>
+            </tr>
+          </thead>
+          <tbody id="intListWrap"></tbody>
+        </table>
+      </div>
+
+      <!-- 상세 모달 -->
+      <div id="detailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center;">
+        <div style="background:white;width:700px;max-height:80vh;overflow-y:auto;padding:24px;position:relative;">
+          <button onclick="closeDetail()" style="position:absolute;top:12px;right:12px;border:none;background:none;font-size:20px;cursor:pointer;color:var(--gray2);">×</button>
+          <div id="detailContent"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+
+</div><!-- /app-wrap -->
+</body></html>
