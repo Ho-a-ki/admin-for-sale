@@ -2348,6 +2348,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('app-wrap').style.display = 'flex';
     await loadAllFromSupabase();
     initCurrentPage();
+  } else {
+    // pre-check로 숨겨진 오버레이를 복원 (세션 만료/무효 케이스)
+    document.getElementById('auth-overlay').style.display = 'flex';
+    document.getElementById('app-wrap').style.display = 'none';
   }
-  // 세션 없으면 로그인 오버레이가 표시된 상태로 대기
 });

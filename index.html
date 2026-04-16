@@ -8,6 +8,22 @@
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="styles.css">
+<script>
+(function(){
+  try {
+    var raw = localStorage.getItem('sb-usycrdxicsxyvasokvns-auth-token');
+    if (!raw) return;
+    var s = JSON.parse(raw);
+    var tok = s && (s.access_token || (s.currentSession && s.currentSession.access_token));
+    var exp = s && (s.expires_at || (s.currentSession && s.currentSession.expires_at));
+    if (tok && (!exp || exp * 1000 > Date.now())) {
+      var el = document.createElement('style');
+      el.textContent = '#auth-overlay{display:none !important}#app-wrap{display:flex !important}';
+      document.head.appendChild(el);
+    }
+  } catch(e) {}
+})();
+</script>
 </head>
 <body data-page="plan-gongu">
 
