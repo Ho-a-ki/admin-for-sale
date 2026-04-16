@@ -1,537 +1,1828 @@
-// ═══════════════════ 유틸 ═══════════════════
-const esc = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
-const fmt = n => n > 0 ? Number(n).toLocaleString() + '원' : '—';
-const uid = () => 'u'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
-const toast = msg => {
-  const el=document.createElement('div');
-  el.style.cssText='position:fixed;bottom:24px;right:24px;background:#1a1d23;color:#fff;padding:11px 18px;border-radius:7px;font-size:12px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.2)';
-  el.textContent=msg; document.body.appendChild(el);
-  setTimeout(()=>el.remove(),2500);
-};
-
-// ═══════════════════ 상태 ═══════════════════
-let currentSet = { name:'', items:[] };   // {code,name,price,qty}
-let savedSets = [];                        // [{id,name,items,discount,setQty,retail,sale}]
-let currentSetIdx = -1;
-let planCatFilter = 'all';
-let dbSortCol = 'code';
-let dbSortAsc = true;
-
-function catalogArray(){
-  return Object.entries(PRODUCT_DB).map(([code,p])=>({
-    code, name:p.name||'', cat:p.cat||'', price:Number(p.price)||0, status:p.status||'활성'
-  }));
-}
-function getCatOrder(){
-  const cats=[...new Set(catalogArray().map(p=>p.cat).filter(Boolean))];
-  return cats.sort();
-}
-
-// ═══════════════════ 제품 DB ═══════════════════
-function populateCatOptions(selectId){
-  const sel=document.getElementById(selectId); if(!sel) return;
-  const cur=sel.value;
-  sel.innerHTML='<option value="">전체 카테고리</option>'+
-    getCatOrder().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-  sel.value=cur;
-}
-
-function renderDB(){
-  const search=(document.getElementById('dbSearch').value||'').toLowerCase();
-  const cat=document.getElementById('dbCatFilter').value;
-  const status=document.getElementById('dbStatusFilter').value;
-  let rows=catalogArray().filter(p=>{
-    if(search && !p.name.toLowerCase().includes(search) && !p.code.toLowerCase().includes(search)) return false;
-    if(cat && p.cat!==cat) return false;
-    if(status && p.status!==status) return false;
-    return true;
-  });
-  const cmp=(a,b)=>{
-    const av=a[dbSortCol], bv=b[dbSortCol];
-    if(typeof av==='number') return dbSortAsc?av-bv:bv-av;
-    return dbSortAsc?String(av).localeCompare(String(bv),'ko'):String(bv).localeCompare(String(av),'ko');
-  };
-  rows.sort(cmp);
-  document.getElementById('dbCount').textContent=rows.length+' 건';
-  const tb=document.getElementById('dbTbody');
-  tb.innerHTML=rows.map(p=>`
-    <tr>
-      <td class="code">${esc(p.code)}</td>
-      <td class="fw6">${esc(p.name)}</td>
-      <td>${esc(p.cat||'—')}</td>
-      <td class="price">${fmt(p.price)}</td>
-      <td class="text-center"><span class="tag ${p.status==='활성'?'tag-active':'tag-soldout'}">${esc(p.status)}</span></td>
-    </tr>`).join('');
-}
-function sortDB(col){
-  if(dbSortCol===col) dbSortAsc=!dbSortAsc; else { dbSortCol=col; dbSortAsc=true; }
-  renderDB();
-}
-function exportDbCSV(){
-  let csv='\uFEFF관리코드,제품명,카테고리,판매가,상태\n';
-  catalogArray().forEach(p=>{
-    csv+=`${p.code},"${p.name}",${p.cat||''},${p.price},${p.status}\n`;
-  });
-  downloadFile('유스트_제품DB.csv', csv, 'text/csv;charset=utf-8');
-}
-
-// ═══════════════════ 기획: 좌측 제품 카탈로그 ═══════════════════
-function initPlanCatBtns(){
-  const btns=document.getElementById('planCatBtns');
-  btns.innerHTML=`<button class="cat-filter-btn active" onclick="setPlanCat('all',this)">전체</button>`+
-    getCatOrder().map(c=>`<button class="cat-filter-btn" onclick="setPlanCat('${esc(c)}',this)">${esc(c)}</button>`).join('');
-}
-function setPlanCat(cat,btn){
-  planCatFilter=cat;
-  document.querySelectorAll('#planCatBtns .cat-filter-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  renderPlanList();
-}
-function renderPlanList(){
-  const search=(document.getElementById('planSearch').value||'').toLowerCase();
-  const list=document.getElementById('planProductList');
-  const groups={};
-  const cats=getCatOrder();
-  cats.forEach(c=>groups[c]=[]);
-  catalogArray().forEach(p=>{
-    if(planCatFilter!=='all' && p.cat!==planCatFilter) return;
-    if(search && !p.name.toLowerCase().includes(search) && !p.code.toLowerCase().includes(search)) return;
-    if(p.status!=='활성') return;
-    if(!groups[p.cat]) groups[p.cat]=[];
-    groups[p.cat].push(p);
-  });
-  let html='', any=false;
-  cats.forEach(cat=>{
-    if(!groups[cat]||!groups[cat].length) return;
-    any=true;
-    html+=`<div class="cat-section-title">${esc(cat)}</div>`;
-    groups[cat].forEach(p=>{
-      html+=`<div class="product-card" onclick='addToSet(${JSON.stringify(p).replace(/'/g,"&#39;")})'>
-        <div class="pc-code">${esc(p.code)}</div>
-        <div class="pc-name">${esc(p.name)}</div>
-        <div class="pc-meta"><span class="pc-price">${fmt(p.price)}</span></div>
-      </div>`;
-    });
-  });
-  if(!any) html='<div style="text-align:center;padding:40px;color:var(--muted);font-size:12px">검색 결과 없음</div>';
-  list.innerHTML=html;
-}
-
-// ═══════════════════ 세트 빌더 ═══════════════════
-function addToSet(p){
-  const existing=currentSet.items.find(i=>i.code===p.code);
-  if(existing){ existing.qty+=1; }
-  else currentSet.items.push({code:p.code,name:p.name,price:p.price,qty:1,gift:false});
-  renderSetItems(); updateSummary();
-}
-function renderSetItems(){
-  const list=document.getElementById('setItemsList');
-  const hint=document.getElementById('setDropHint');
-  hint.style.display=currentSet.items.length>0?'none':'block';
-  const setQty=parseInt(document.getElementById('setQtyInput')?.value)||1;
-  list.innerHTML=currentSet.items.map((item,idx)=>{
-    const needed=item.qty*setQty;
-    const giftOn=!!item.gift;
-    return `<div class="set-item" style="${giftOn?'background:#fffbeb;border-color:#fde68a':''}">
-      <div class="set-item-num" style="${giftOn?'background:#92400e':''}">${idx+1}</div>
-      <div class="set-item-info">
-        <div class="set-item-code">${esc(item.code)}</div>
-        <div class="set-item-name">${esc(item.name)}${giftOn?' <span class="tag" style="background:#fef3c7;color:#92400e;margin-left:4px">🎁 증정</span>':''}</div>
-        <div class="set-item-price" style="${giftOn?'text-decoration:line-through;color:var(--muted)':''}">${fmt(item.price)}</div>
-      </div>
-      <label class="text-center" style="min-width:44px;cursor:pointer;user-select:none">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">증정</div>
-        <input type="checkbox" ${giftOn?'checked':''} onchange="toggleGift(${idx},this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#92400e">
-      </label>
-      <div class="text-center" style="min-width:44px">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">세트당</div>
-        <input type="number" class="set-item-qty" value="${item.qty}" min="1" onchange="updateQty(${idx},this.value)">
-      </div>
-      <div class="text-center" style="min-width:54px;padding:0 4px">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">필요수량</div>
-        <div style="font-family:ui-monospace,monospace;font-size:13px;font-weight:700;color:var(--blue)">${needed}</div>
-      </div>
-      <button class="set-item-remove" onclick="removeFromSet(${idx})">×</button>
-    </div>`;
-  }).join('');
-}
-function toggleGift(idx,on){
-  currentSet.items[idx].gift=!!on;
-  renderSetItems(); updateSummary();
-}
-function updateQty(idx,val){
-  currentSet.items[idx].qty=parseInt(val)||1;
-  renderSetItems(); updateSummary();
-}
-function removeFromSet(idx){
-  currentSet.items.splice(idx,1);
-  renderSetItems(); updateSummary();
-}
-function clearCurrentSet(){
-  if(currentSet.items.length>0 && !confirm('세트를 초기화할까요?')) return;
-  currentSet={name:'',items:[]};
-  document.getElementById('setNameInput').value='';
-  document.getElementById('setQtyInput').value=1;
-  document.getElementById('discountRate').value=0;
-  currentSetIdx=-1;
-  renderSetItems(); updateSummary(); renderSavedSets();
-}
-function updateSummary(){
-  const total=currentSet.items.reduce((s,i)=>s+(i.gift?0:i.price*i.qty),0);
-  const disc=parseInt(document.getElementById('discountRate').value)||0;
-  const sale=Math.round(total*(1-disc/100));
-  const giftCount=currentSet.items.filter(i=>i.gift).length;
-  document.getElementById('sumItemCount').textContent=currentSet.items.length+' 종'+(giftCount?` (증정 ${giftCount}종)`:'');
-  document.getElementById('sumRetail').textContent=total.toLocaleString()+'원';
-  document.getElementById('sumSalePrice').textContent=sale.toLocaleString()+'원';
-}
-function newSet(){ clearCurrentSet(); }
-
-function saveCurrentSet(){
-  const name=document.getElementById('setNameInput').value.trim();
-  if(!name) return alert('세트명을 입력하세요.');
-  if(currentSet.items.length===0) return alert('제품을 추가하세요.');
-  const disc=parseInt(document.getElementById('discountRate').value)||0;
-  const setQty=parseInt(document.getElementById('setQtyInput').value)||1;
-  const total=currentSet.items.reduce((s,i)=>s+(i.gift?0:i.price*i.qty),0);
-  const existingId = currentSetIdx>=0 ? savedSets[currentSetIdx].id : uid();
-  const setObj={
-    id:existingId, name,
-    items:currentSet.items.map(i=>({code:i.code,name:i.name,price:i.price,qty:i.qty,gift:!!i.gift})),
-    discount:disc, setQty,
-    retail:total, sale:Math.round(total*(1-disc/100))
-  };
-  if(currentSetIdx>=0) savedSets[currentSetIdx]=setObj;
-  else { savedSets.push(setObj); currentSetIdx=savedSets.length-1; }
-  sbUpsertPlan(setObj);
-  renderSavedSets();
-  toast(`"${name}" 세트 저장됨`);
-}
-function loadSet(idx){
-  const s=savedSets[idx];
-  currentSetIdx=idx;
-  currentSet={name:s.name, items:s.items.map(i=>({...i}))};
-  document.getElementById('setNameInput').value=s.name;
-  document.getElementById('discountRate').value=s.discount||0;
-  document.getElementById('setQtyInput').value=s.setQty||1;
-  renderSetItems(); updateSummary(); renderSavedSets();
-}
-function deleteSet(idx){
-  const s=savedSets[idx];
-  if(!confirm(`"${s.name}" 세트를 삭제할까요?`)) return;
-  sbDeletePlan(s.id);
-  savedSets.splice(idx,1);
-  if(currentSetIdx===idx) currentSetIdx=-1;
-  else if(currentSetIdx>idx) currentSetIdx--;
-  renderSavedSets();
-}
-function renderSavedSets(){
-  const el=document.getElementById('savedSetsList');
-  if(!savedSets.length){
-    el.innerHTML='<div style="font-size:12px;color:var(--muted);padding:8px 0">저장된 세트 없음</div>';
-    return;
-  }
-  el.innerHTML=savedSets.map((s,idx)=>`
-    <div class="saved-set-item${idx===currentSetIdx?' active':''}" onclick="loadSet(${idx})">
-      <div class="flex">
-        <div style="flex:1;min-width:0">
-          <div class="ss-name">${esc(s.name)}</div>
-          <div class="ss-meta">${s.items.length}종 · 할인 ${s.discount||0}% · <strong style="color:var(--blue)">${s.setQty||1}개</strong></div>
-          <div class="ss-price">${(s.sale||0).toLocaleString()}원/세트</div>
-        </div>
-        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteSet(${idx})">삭제</button>
-      </div>
-    </div>`).join('');
-}
-
-// ═══════════════════ 엑셀/CSV ═══════════════════
-function downloadFile(filename,content,mime){
-  const blob=new Blob([content],{type:mime});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download=filename;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
-}
-function exportSetExcel(){
-  if(currentSet.items.length===0) return alert('세트에 제품을 추가하세요.');
-  const name=document.getElementById('setNameInput').value.trim()||'세트기획';
-  const disc=parseInt(document.getElementById('discountRate').value)||0;
-  const total=currentSet.items.reduce((s,i)=>s+i.price*i.qty,0);
-  const sale=Math.round(total*(1-disc/100));
-  let csv='\uFEFF';
-  csv+=`세트명:,${name}\n생성일:,${new Date().toLocaleDateString('ko-KR')}\n할인율:,${disc}%\n\n`;
-  csv+='순번,관리코드,제품명,판매가,수량,소계\n';
-  currentSet.items.forEach((item,i)=>{
-    csv+=`${i+1},${item.code},"${item.name}",${item.price},${item.qty},${item.price*item.qty}\n`;
-  });
-  csv+=`\n합산정가,,,,,${total}\n세트판매가(${disc}% 할인),,,,,${sale}\n절약금액,,,,,${total-sale}\n`;
-  downloadFile(`유스트_${name}_기획.csv`, csv, 'text/csv;charset=utf-8');
-}
-
-// ═══════════════════ 물류 취합 ═══════════════════
-let _lastLogistics=null;
-function buildLogistics(){
-  if(!savedSets.length){ alert('저장된 세트가 없습니다.'); return; }
-
-  // 세트별 현황
-  document.getElementById('logSetTbody').innerHTML=savedSets.map(s=>`
-    <tr>
-      <td class="fw6">${esc(s.name)}</td>
-      <td class="text-center" style="font-family:ui-monospace,monospace;font-weight:700;color:var(--blue)">${s.setQty||1}개</td>
-      <td class="text-center">${s.items.length}종</td>
-      <td>${s.discount||0}%</td>
-      <td style="font-family:ui-monospace,monospace;text-align:right">${(s.sale||0).toLocaleString()}원</td>
-      <td style="font-size:11px;color:var(--muted)">${esc(s.items.map(i=>i.name).join(', '))}</td>
-    </tr>`).join('');
-
-  // 관리코드별 합산
-  const merged={};
-  savedSets.forEach(s=>{
-    const sq=s.setQty||1;
-    s.items.forEach(item=>{
-      const needed=item.qty*sq;
-      if(!merged[item.code]){
-        const prod=PRODUCT_DB[item.code];
-        merged[item.code]={
-          name:item.name, price:item.price,
-          cat:prod?.cat||'—',
-          total:0, paidTotal:0, sources:[]
-        };
-      }
-      merged[item.code].total+=needed;
-      if(!item.gift) merged[item.code].paidTotal+=needed;
-      merged[item.code].sources.push(`${s.name}×${sq}(${item.qty}개${item.gift?' 🎁':''})`);
-    });
-  });
-
-  const catOrder=getCatOrder();
-  const sorted=Object.entries(merged).sort((a,b)=>{
-    const ai=catOrder.indexOf(a[1].cat), bi=catOrder.indexOf(b[1].cat);
-    if(ai!==bi) return (ai===-1?99:ai)-(bi===-1?99:bi);
-    return a[1].name.localeCompare(b[1].name,'ko');
-  });
-
-  const tbody=document.getElementById('logTbody');
-  const tfoot=document.getElementById('logTfoot');
-  let gTotal=0,gAmt=0,lastCat=null;
-  tbody.innerHTML=sorted.map(([code,d])=>{
-    const amt=d.price*(d.paidTotal||0); gTotal+=d.total; gAmt+=amt;
-    const giftQty=d.total-(d.paidTotal||0);
-    let catRow='';
-    if(d.cat!==lastCat){
-      lastCat=d.cat;
-      catRow=`<tr><td colspan="7" style="background:var(--blue);color:#fff;font-size:11px;font-weight:700;padding:5px 10px;letter-spacing:.04em">${esc(d.cat)}</td></tr>`;
-    }
-    return catRow+`<tr>
-      <td class="code">${esc(code)}</td>
-      <td class="fw6">${esc(d.name)}</td>
-      <td>${esc(d.cat)}</td>
-      <td style="font-family:ui-monospace,monospace;text-align:right">${d.price.toLocaleString()}</td>
-      <td style="font-family:ui-monospace,monospace;font-size:15px;font-weight:700;text-align:center;color:var(--blue)">${d.total}${giftQty?`<div style="font-size:10px;font-weight:500;color:#92400e">🎁 ${giftQty}</div>`:''}</td>
-      <td style="font-family:ui-monospace,monospace;text-align:right">${amt.toLocaleString()}</td>
-      <td style="font-size:11px;color:var(--muted)">${esc(d.sources.join(' / '))}</td>
-    </tr>`;
-  }).join('');
-
-  tfoot.innerHTML=`<tr style="background:#fafbfc;border-top:2px solid var(--border)">
-    <td colspan="4" style="font-weight:700;padding:8px 10px;text-align:right">합계</td>
-    <td style="font-family:ui-monospace,monospace;font-size:15px;font-weight:700;text-align:center;color:var(--blue);padding:8px 10px">${gTotal}</td>
-    <td style="font-family:ui-monospace,monospace;font-weight:700;text-align:right;padding:8px 10px">${gAmt.toLocaleString()}</td>
-    <td></td>
-  </tr>`;
-
-  document.getElementById('logTotalKinds').textContent=sorted.length+' 종';
-  document.getElementById('logTotalQty').textContent='총 '+gTotal+'개';
-  _lastLogistics={sorted,savedSets:[...savedSets]};
-}
-function exportLogisticsCSV(){
-  if(!_lastLogistics){ alert('먼저 [취합 계산]을 눌러주세요.'); return; }
-  const {sorted,savedSets:sets}=_lastLogistics;
-  const today=new Date().toLocaleDateString('ko-KR');
-  let csv='\uFEFF'+`유스트 물류 취합표,생성일:,${today}\n\n`;
-  csv+='=== 세트별 기획 현황 ===\n세트명,세트수량,구성종,할인율,세트판매가\n';
-  sets.forEach(s=>{ csv+=`"${s.name}",${s.setQty||1},${s.items.length},${s.discount||0}%,${s.sale||0}\n`; });
-  csv+='\n=== 관리코드별 필요수량 합산 ===\n관리코드,제품명,카테고리,단가,필요수량,금액소계,세트출처\n';
-  sorted.forEach(([code,d])=>{
-    csv+=`${code},"${d.name}",${d.cat},${d.price},${d.total},${d.price*(d.paidTotal||0)},"${d.sources.join(' / ')}"\n`;
-  });
-  const gt=sorted.reduce((s,[,d])=>s+d.total,0);
-  const ga=sorted.reduce((s,[,d])=>s+d.price*(d.paidTotal||0),0);
-  csv+=`,,,,합계,${gt},${ga}\n`;
-  downloadFile(`유스트_물류취합_${today}.csv`, csv, 'text/csv;charset=utf-8');
-}
-
-// ═══════════════════ 기획상품 합산 (분해 뷰) ═══════════════════
-function renderSummary(){
-  const q=(document.getElementById('smSearch').value||'').toLowerCase();
-  const merged={};
-  savedSets.forEach(s=>{
-    const sq=s.setQty||1;
-    s.items.forEach(item=>{
-      const needed=item.qty*sq;
-      if(!merged[item.code]){
-        const prod=PRODUCT_DB[item.code];
-        merged[item.code]={
-          name:item.name, price:item.price, cat:prod?.cat||'—',
-          total:0, paidTotal:0, breakdown:[]
-        };
-      }
-      merged[item.code].total+=needed;
-      if(!item.gift) merged[item.code].paidTotal+=needed;
-      merged[item.code].breakdown.push({setName:s.name, setQty:sq, perSet:item.qty, total:needed, discount:s.discount||0, gift:!!item.gift});
-    });
-  });
-  let rows=Object.entries(merged).map(([code,d])=>({code,...d}));
-  const totalAll=rows.reduce((s,r)=>s+r.total,0);
-  const amtAll=rows.reduce((s,r)=>s+(r.paidTotal||0)*r.price,0);
-  if(q) rows=rows.filter(r=>r.name.toLowerCase().includes(q)||r.code.toLowerCase().includes(q));
-  rows.sort((a,b)=>b.total-a.total);
-
-  document.getElementById('smSetCount').textContent=savedSets.length;
-  document.getElementById('smSkuCount').textContent=Object.keys(merged).length;
-  document.getElementById('smQtyTotal').textContent=totalAll.toLocaleString();
-  document.getElementById('smAmtTotal').textContent=amtAll.toLocaleString()+'원';
-
-  const el=document.getElementById('smList');
-  if(!rows.length){ el.innerHTML='<div class="empty">'+(savedSets.length?'검색 결과 없음':'저장된 세트가 없습니다')+'</div>'; return; }
-
-  el.innerHTML=rows.map(r=>{
-    const amt=(r.paidTotal||0)*r.price;
-    const giftQty=r.total-(r.paidTotal||0);
-    const breakdown=r.breakdown.map(b=>`
-      <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-top:1px solid #f3f4f6;font-size:12px${b.gift?';background:#fffbeb':''}">
-        <span style="font-weight:500">${esc(b.setName)}</span>
-        ${b.gift?'<span class="tag" style="background:#fef3c7;color:#92400e">🎁 증정</span>':''}
-        <span style="color:var(--muted);font-size:11px">세트당 ${b.perSet}개 × ${b.setQty}세트</span>
-        ${b.discount>0&&!b.gift?`<span class="tag tag-c">할인 ${b.discount}%</span>`:''}
-        <span style="margin-left:auto;font-family:ui-monospace,monospace;font-weight:700;color:var(--blue)">${b.total}개</span>
-      </div>`).join('');
-    return `<div class="card" style="margin-bottom:10px;overflow:hidden">
-      <div class="flex" style="padding:11px 16px;background:#fafbfc;border-bottom:1px solid var(--border)">
-        <code class="mono" style="background:#fff;padding:2px 8px;border-radius:4px;border:1px solid var(--border)">${esc(r.code)}</code>
-        <span style="font-weight:600;font-size:13px">${esc(r.name)}</span>
-        ${r.cat?`<span class="tag tag-c">${esc(r.cat)}</span>`:''}
-        <span style="font-size:11px;color:var(--muted)">${r.breakdown.length}개 세트</span>
-        <div class="spacer"></div>
-        <span style="font-size:15px;font-weight:700;color:var(--blue);font-family:ui-monospace,monospace">${r.total}개${giftQty?` <span style="font-size:11px;color:#92400e">(🎁${giftQty})</span>`:''}</span>
-        <span style="font-size:12px;color:var(--purple);font-weight:600">${amt.toLocaleString()}원</span>
-      </div>
-      <div>${breakdown}</div>
-    </div>`;
-  }).join('');
-}
-
-// ═══════════════════ 네비 ═══════════════════
-const titles={productdb:'제품 DB',planning:'기획 (세트 구성)',logistics:'물류 취합',summary:'기획상품 합산'};
-function goPage(name,el){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
-  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('on'));
-  document.getElementById('page-'+name).classList.add('on');
-  if(el) el.classList.add('on');
-  document.getElementById('topbar-title').textContent=titles[name]||'';
-  if(name==='productdb') renderDB();
-  if(name==='planning'){ initPlanCatBtns(); renderPlanList(); renderSavedSets(); renderSetItems(); updateSummary(); }
-  if(name==='logistics') buildLogistics();
-  if(name==='summary') renderSummary();
-}
-
-// ═══════════════════ Supabase ═══════════════════
+// ══════════════ SUPABASE ══════════════
 const SB_URL = 'https://usycrdxicsxyvasokvns.supabase.co';
 const SB_KEY = 'sb_publishable_NPHJWK3WOdHsVog_PwLLYQ_v4gEAKwL';
-let sb=null;
-try{ sb=window.supabase.createClient(SB_URL,SB_KEY); }catch(e){ console.warn('Supabase SDK load failed:',e); }
+const sb = supabase.createClient(SB_URL, SB_KEY);
 
-async function doLogin(){
-  if(!sb) return;
-  const email=document.getElementById('auth-email').value.trim();
-  const pw=document.getElementById('auth-pw').value;
-  const errEl=document.getElementById('auth-error'); errEl.textContent='';
-  if(!email||!pw){ errEl.textContent='이메일과 비밀번호를 입력하세요'; return; }
-  const {error}=await sb.auth.signInWithPassword({email,password:pw});
-  if(error){ errEl.textContent=error.message; return; }
-  location.reload();
+// ══════════════ DATA (Supabase에서 로드) ══════════════
+let DB = [
+  ["2000100","바디 마사지 브러쉬","홈&리빙","C",89000,"활성"],
+  ["2000203","HF DC LIMONENMINZE ZAHNGEL 90 ML INT","—","C",0,"활성"],
+  ["2000290","유카솔 솔트 250","바스","A",65000,"활성"],
+  ["2000303","스테인 리무버 75","홈&리빙","C",24000,"활성"],
+  ["2000366","라벤더 스프레이 100","홈&리빙","C",83000,"활성"],
+  ["2000380","해초 바스 250","바스","C",54000,"활성"],
+  ["2000381","에델바이스 바스 250","바스","C",54000,"활성"],
+  ["2000382","릴렉스 바스 250","바스","C",54000,"활성"],
+  ["2000383","성요한초 바스 250","바스","C",54000,"활성"],
+  ["2000384","사차인치 샤워오일 200","바스","C",51000,"활성"],
+  ["2000386","다마스세나로즈 에델 토닉 150","페이스","C",45000,"활성"],
+  ["2000389","프로방스로즈 필링 50","페이스","C",66000,"활성"],
+  ["2000390","블랙로즈 마스크 75","페이스","C",75000,"활성"],
+  ["2000394","리제너레이팅 세럼 30","페이스","C",83000,"활성"],
+  ["2000395","에델 아이&립 컨튜어 30","페이스","C",85000,"활성"],
+  ["2000398","쟈스민&알로에 샤워젤 250","바스","C",49000,"활성"],
+  ["2000399","해초 샤워젤 250","바스","C",49000,"품절"],
+  ["2000400","라임&민트 샤워젤 250","바스","C",49000,"활성"],
+  ["2000409","에크나시아 바스에센스 75","바스","A",55000,"활성"],
+  ["2000447","SHOWER EDELWEISS B/P 300 ML INT","—","C",0,"활성"],
+  ["2000461","밀크 로션 250","바디케어","C",58000,"품절"],
+  ["2000490","산액티브 솔트 500","바스","C",79000,"활성"],
+  ["2000504","아욱 바디 버터 150","바디케어","C",63000,"활성"],
+  ["2000507","31 허브 오일 80","에센셜 오일","A",80000,"활성"],
+  ["2000509","에델바이스 발삼 500","바디케어","A",99000,"활성"],
+  ["2000510","바디케어 오일 125","바디케어","C",45000,"활성"],
+  ["2000581","유카솔 75","홈&리빙","A",45000,"활성"],
+  ["2000600","구두치 롤 온 10","에센셜 오일","A",46000,"활성"],
+  ["2000603","라멜로뎀 SOS 세럼 50","바디케어","C",46000,"활성"],
+  ["2000606","아이리드 스프레이 18","페이스 (기타)","A",48000,"품절"],
+  ["2000614","쉐이핑 바디 플루이드 200","바디케어","C",117000,"활성"],
+  ["2000615","리프팅 플루이드 100","바디케어","C",79000,"품절"],
+  ["2000616","라멜로뎀 바디로션 200","바디케어","C",79000,"품절"],
+  ["2000629","쿠퍼로즈 세럼","","C",0,"활성"],
+  ["2000652","라멜로뎀 샤워젤 200","바스","C",59000,"활성"],
+  ["2000694","멜리사 바스에센스 125","바스","C",85000,"활성"],
+  ["2000695","샌달우드 바스에센스 125","바스","A",92000,"활성"],
+  ["2000696","노간주 바스에센스 125","바스","A",85000,"활성"],
+  ["2000697","백리향 바스에센스 125","바스","A",85000,"활성"],
+  ["2000702","(삭제된 제품)","—","C",0,"활성"],
+  ["2000734","DC HERBAL MOUTH WASH 75 ML IN2 (신제품?)","","C",0,"활성"],
+  ["2000738","카렌듈라 립밤","페이스 (기타)","C",26000,"활성"],
+  ["2000757","INTIMATE WASH CAMOM./OAT 250ML IN","","C",0,"활성"],
+  ["2000758","GEL INTIM CAMOM./OAT 30 ML INT","","C",0,"활성"],
+  ["2000830","헤어 리페어 밤 150","헤어","A",49000,"활성"],
+  ["2000838","헤어 로션 스프레이 75","헤어","C",76000,"활성"],
+  ["2000840","스트롱 헤어 샴푸 250","헤어","C",56000,"활성"],
+  ["2000841","스트롱 헤어 마스크 150","헤어","C",51000,"품절"],
+  ["2000850","페퍼민트 오일 10","에센셜 오일","C",31000,"활성"],
+  ["2000854","EO WILD THYME 10 ML INT","—","C",0,"활성"],
+  ["2000860","NEW 에델바이스 알펜로제 토닉 150","페이스","C",46000,"활성"],
+  ["2000861","NEW 에델 알펜로제 메이크업 리무버 150","페이스","C",50000,"활성"],
+  ["2000862","NEW 에델바이스 알펜로제 클렌징 크림 125","페이스","C",71000,"활성"],
+  ["2000863","NEW 에델 알펜로제 클렌징젤 125","페이스","C",70000,"활성"],
+  ["2000864","NEW 에델 알펜로제 필링 50","페이스","C",45000,"품절"],
+  ["2000865","NEW 에델 알펜로제 마스크 75","페이스","C",76000,"활성"],
+  ["2000866","NEW 에델 알펜로제 데이크림 50","페이스","C",90000,"활성"],
+  ["2000867","NEW 에델 알펜로제 나이트크림 50","페이스","C",90000,"활성"],
+  ["2000868","NEW 에델 알펜로제 24H 크림 50","페이스","C",80000,"활성"],
+  ["2000869","NEW 에델 알펜로제 세럼 30 S","페이스","C",84000,"활성"],
+  ["2000870","NEW 에델 알펜로제 하이드로젤 50","페이스","C",73000,"활성"],
+  ["2000871","NEW 에델 알펜로제 아이크림 30","페이스","C",86000,"활성"],
+  ["2000872","벨벳 스킨 바디로션 200","바디케어","C",58000,"활성"],
+  ["2000873","NEW 씨씨(CC) 크림 미디움(베이지) 30","페이스 (기타)","C",48000,"활성"],
+  ["2000874","VJ EDELW.ALPENR. ELIXIR 15 ML INT","—","C",0,"활성"],
+  ["2000890","칼모덤 페이스크림 50","페이스 (기타)","C",39000,"품절"],
+  ["2000892","칼모덤 바디로션 200","바디케어","C",46000,"활성"],
+  ["2000894","칼모덤 스칼프 플루이드 200","헤어","C",66000,"활성"],
+  ["2000931","HERBAL ACTIVE FLUID ROLL-ON 50 ML","","C",0,"활성"],
+  ["2000960","페이스크림 (SPF 30)","페이스 (기타)","C",64000,"활성"],
+  ["2003207","씨씨(CC) 크림 미디움(베이지) 30","페이스 (기타)","C",48000,"활성"],
+  ["2003312","엔알(NR) 세제 1000","홈&리빙","C",52000,"활성"],
+  ["2003367","라벤더 스프레이 115","홈&리빙","C",83000,"활성"],
+  ["2003376","퓨리파잉 클렌져&마스크 100","페이스 (기타)","C",57000,"활성"],
+  ["2003387","다마스세나로즈 메이크업리무버 150","페이스","C",49000,"활성"],
+  ["2003449","아욱 샤워폼 300","바스","C",64000,"활성"],
+  ["2003459","밀크 샤워젤 250","바스","C",49000,"활성"],
+  ["2003462","케어&리페어 오일 40","페이스 (기타)","A",58000,"활성"],
+  ["2003464","더말 팽고 머드 팩 200","바디케어","C",98000,"활성"],
+  ["2003494","데드씨솔트 바디필링 150","바디케어","C",59000,"활성"],
+  ["2003494-G","데드씨솔트 바디필링 150ml","바디케어","C",14750,"활성"],
+  ["2003500","에델바이스 발삼 250 S","바디케어","A",58000,"활성"],
+  ["2003503","아르니카 크림젤 100","허브 크림","A",47000,"활성"],
+  ["2003509","라벤더 크림 60","허브 크림","C",31000,"활성"],
+  ["2003511","티트리 크림 100","허브 크림","A",45000,"활성"],
+  ["2003512","산액티브 크림 100","허브 크림","C",33000,"활성"],
+  ["2003514","카렌듈라 크림 100","허브 크림","A",49000,"활성"],
+  ["2003515","31 허브 오일 75","에센셜 오일","A",72000,"활성"],
+  ["2003517","노간주 크림 100","허브 크림","A",49000,"활성"],
+  ["2003518","백리향 크림 100","허브 크림","A",48000,"활성"],
+  ["2003519","알프스 허브밤 13","바디케어","C",43000,"활성"],
+  ["2003521","아욱 로션 250","바디케어","A",68000,"활성"],
+  ["2003524","아욱 크림 60","허브 크림","C",33000,"활성"],
+  ["2003526","아욱 크림 100","허브 크림","C",52000,"활성"],
+  ["2003547","컴프리 젤 100","허브 크림","C",45000,"활성"],
+  ["2003550","가든크레스 크림 100","허브 크림","A",69000,"활성"],
+  ["2003558","데오 아욱 롤 온 50","바디케어","C",39000,"활성"],
+  ["2003588","티트리 샴푸 250","헤어","A",52000,"활성"],
+  ["2003598","마로니에 젤 100","허브 크림","A",45000,"활성"],
+  ["2003625","멀베리 크림 100","홈&리빙","C",70000,"활성"],
+  ["2003639","NEW 리파이닝 페이스 토닉","페이스 (기타)","C",55000,"활성"],
+  ["2003651","라멜로뎀 크림 100","허브 크림","A",74000,"활성"],
+  ["2003693","아펜젤러 헤이플라워 크림 50","바디케어","C",39000,"활성"],
+  ["2003702","가드니아 롤 온 10","에센셜 오일","A",48000,"활성"],
+  ["2003721","카모마일 핸드크림 100","허브 크림","A",43000,"활성"],
+  ["2003724","핸드젤 250","홈&리빙","C",88000,"활성"],
+  ["2003730","핸드솝 250","홈&리빙","C",26000,"활성"],
+  ["2003751","페디 솔트 500","바스","A",34000,"활성"],
+  ["2003754","핸드 세럼 안티 스팟 30","바디케어","C",48000,"활성"],
+  ["2003755","패스트 프로텍션 핸드크림 75","허브 크림","C",36000,"활성"],
+  ["2003756","아몬드 밀크 로션 250","바디케어","C",58000,"활성"],
+  ["2003771","페디 크림 100","허브 크림","C",33000,"활성"],
+  ["2003774","바디 프레쉬 젤 100","허브 크림","C",45000,"활성"],
+  ["2003782","페디본 스프레이 75","바디케어","C",35000,"활성"],
+  ["2003801","레몬 오일 10","에센셜 오일","C",23000,"활성"],
+  ["2003802","유칼리 오일 10","에센셜 오일","C",24000,"활성"],
+  ["2003804","라벤더 오일 10","에센셜 오일","C",28000,"활성"],
+  ["2003806","오렌지 오일 10","에센셜 오일","C",19000,"활성"],
+  ["2003816","티트리 오일 10","에센셜 오일","C",42000,"활성"],
+  ["2003825","파인 오일 10","에센셜 오일","C",24000,"활성"],
+  ["2003826","실키 헤어 샴푸 250","헤어","A",49000,"활성"],
+  ["2003827","스트레스 헤어 샴푸 250","헤어","C",55000,"활성"],
+  ["2003839","익스프레스 리페어 세럼 120","헤어","C",61000,"활성"],
+  ["2003850","3민트 믹스 오일 10","에센셜 오일","C",34000,"활성"],
+  ["2003851","밸런스 조이 롤 온 10","에센셜 오일","C",39000,"활성"],
+  ["2003995","안티 스트레스 오일 10","에센셜 오일","A",44000,"활성"],
+  ["2003997","에너지 플러스 오일 10","에센셜 오일","C",31000,"품절"],
+  ["2062628","엔알(NR) 세제 500","홈&리빙","C",28000,"활성"],
+  ["2069652","가든크레스 크림 30","허브 크림","C",24000,"활성"],
+  ["2071229","덴탈 치약 세트 (라임 민트 & 아이리스 루트) 150","홈&리빙","C",75000,"활성"],
+  ["2071694","샌달우드 샤워젤 125","바스","C",25000,"활성"],
+  ["2071695","샌달우드 바디 버터 100","바디케어","C",26000,"활성"],
+  ["2072210","클라리세이지 75","바디케어","C",39000,"활성"],
+  ["2072403","라멜로뎀 크림 30","허브 크림","C",26000,"활성"],
+  ["2073060","페디 크림 30","허브 크림","C",13000,"활성"],
+  ["2073061","티트리 크림 30","허브 크림","C",16000,"활성"],
+  ["2073062","아르니카 크림젤 30","허브 크림","C",17000,"활성"],
+  ["2073268","룸스프레이 레몬 200","허브 크림","C",47000,"활성"],
+  ["2073470","카모마일 핸드크림 30","허브 크림","C",16000,"활성"],
+  ["2073551","산액티브 크림 30","허브 크림","C",13000,"활성"],
+  ["2073554","카렌듈라 크림 30","허브 크림","C",17000,"활성"],
+  ["2073555","라벤더 크림 30","허브 크림","C",17000,"활성"],
+  ["2073557","노간주 크림 30","허브 크림","C",18000,"활성"],
+  ["2073558","백리향 크림 30","허브 크림","C",17000,"활성"],
+  ["2073560","아욱 크림 30","허브 크림","C",19000,"활성"],
+  ["2073628","마로니에 젤 30","허브 크림","C",16000,"활성"],
+  ["2073937","에센셜 롤 온 3종 세트","에센셜 오일","C",69000,"활성"],
+  ["2075301","페디본 스프레이 30","바디케어","C",24000,"활성"],
+  ["2075988","바스에센스 세트 20x4 S","바스","C",69000,"활성"],
+  ["2076340","BODYBUTTER MALLOW 2020 50 ML IN1","—","C",0,"활성"],
+  ["2076783","메디테이션 오일 10","에센셜 오일","C",25000,"활성"],
+  ["2076808","메이창 오일 10","바스","C",33000,"품절"],
+  ["2077032","BODYBUTTER PATCH./VANILLA 2022 50ML IN1","—","C",0,"활성"],
+  ["2077166","바디 프레쉬 젤 30","허브 크림","C",16000,"활성"],
+  ["2077309","팔마로사 오일 10","에센셜 오일","C",22000,"품절"],
+  ["2077408","NEW 에델 알펜로제 데이크림 30","페이스","C",55000,"활성"],
+  ["2077410","NEW 에델 알펜로제 나이트크림 30","페이스","C",55000,"활성"],
+  ["2077413","에델 알펜로제 24H 크림 30","페이스","C",48000,"활성"],
+  ["2077660","NEW 에델 알펜로제 하이드로젤 30","페이스","C",44000,"활성"],
+  ["2077818","화이트 블로썸 오일 10","에센셜 오일","C",34000,"활성"],
+  ["2077877","NEW 에델 알펜로제 클렌징 크림 50","페이스","C",29000,"활성"],
+  ["2077971","에델 알펜로제 클렌징젤 50","페이스","C",28000,"활성"],
+  ["2078109","유카솔 30","홈&리빙","C",22000,"활성"],
+  ["2078245","백리향&메도우스위트 바디로션 100","바디케어","C",0,"활성"],
+  ["2078297","트루 러브 오일 10","에센셜 오일","C",33000,"품절"],
+  ["2078609","에델 알펜로제 아이크림 15","페이스","C",43000,"활성"],
+  ["2078611","에델 알펜로제 마스크 30","페이스","C",30000,"활성"],
+  ["2078614","프로방스로즈 필링 30","페이스","C",27000,"활성"],
+  ["2078750","데드씨솔트 바디필링 75","바디케어","C",29000,"활성"],
+  ["2078751","카모마일 핸드크림 60","허브 크림","C",25000,"품절"],
+  ["2078847","아펜젤러 헤이플라워 크림 30","바디케어","C",24000,"활성"],
+  ["2078849","콘민트 샤워&샴푸 100","바스","C",23000,"활성"],
+  ["2078853","콘민트 바디로션 100","바디케어","C",25000,"활성"],
+  ["2078939","데오 인팀 카모마일 50","바디케어","C",17000,"활성"],
+  ["2078941","카모마일&바닐라 바디로션 100","바디케어","C",25000,"활성"],
+  ["2078943","31 허브 오일 20","에센셜 오일","A",23000,"활성"],
+  ["2078970","멀베리 크림 30","허브 크림","C",25000,"품절"],
+  ["2079009","샌달우드 데오 스프레이 30","바디케어","C",22000,"활성"],
+  ["2079651","MAND. / ROOIB. BODY BUTTER 50 ML INT.","—","C",0,"활성"],
+  ["2079653","BODYBUTTER MYRT I ROSA PFEFFER 50ML INT.","—","C",0,"활성"],
+  ["60HO19-90","덴탈 치약 라임 민트 (오전) 90","홈&리빙","C",39000,"활성"],
+  ["60HO19-91","덴탈 치약 (오후) 60","홈&리빙","C",0,"활성"],
+  ["60VT10-60","비타 보디가드","","C",250000,"활성"],
+  ["60VT11-60","비타 바디 플렉스","","C",250000,"활성"],
+  ["60VT12-60","비타 바디핏","","C",250000,"활성"],
+  ["60VT13-60","비타 디톡스","","C",250000,"활성"],
+  ["60VT14-60","비타 스킨 프로텍트","","C",250000,"활성"],
+  ["90BP101","블렌딩 바스에센스","바스","C",150000,"활성"],
+  ["90BP102","블렌딩 바디 로션","바디케어","C",150000,"활성"],
+  ["90BP103","블렌딩 페이스 로션","페이스","C",400000,"활성"],
+  ["P250428-003","바디 프레쉬 젤 30 세트 S","—","C",45000,"활성"],
+  ["P260128-001","백30+유카솔30+허브밤","—","C",0,"활성"],
+  ["P260128-002","8크림 세트","—","C",0,"활성"],
+  ["P260311-001","라멜로뎀 샤워젤 - NEW","","C",59000,"활성"],
+  ["2076931","APPENZELLER HAYFLOWER CREAM 10 ML IN1","샘플","",0,"활성"],
+  ["2077893","VJ EDELW. ALPENR. 24H CREAM 10ML IN1","샘플","",0,"활성"],
+  ["2078095","VJ EDELW.ALPENR.MASK 10ML INT","샘플","",0,"활성"],
+  ["2078434","JUST Beauty Case Faux Leather","비품","",0,"활성"],
+  ["2078502","아르니카 크림젤 10","샘플","",4000,"품절"],
+  ["2078503","KC TEA TREE MANUCA ROSALINE 10ML INT","샘플","",0,"활성"],
+  ["2078504","KC MARIGOLD 10 ML INT","샘플","",0,"활성"],
+  ["2078505","라벤더 크림 10","샘플","",4000,"품절"],
+  ["2078507","KC THYME 10 ML INT","샘플","",0,"활성"],
+  ["2078508","카모마일 핸드크림 10","샘플","",4000,"품절"],
+  ["2078510","라멜로뎀 크림 10","샘플","",4000,"품절"],
+  ["2078512","마로니에 젤 10","샘플","",4000,"품절"],
+  ["2078513","산액티브 크림 10","샘플","",4000,"품절"],
+  ["2078591","VJ EDELW.ALPENR. DAY CREAM 10 ML INT","샘플","",0,"활성"],
+  ["2079023","VJ PEELING PROVEN.ROSE/EDELW 10 ML INT.","샘플","",0,"활성"],
+  ["2079026","VJ EDELW.ALPENR. NIGHT CREAM 10 ML INT","샘플","",0,"활성"],
+  ["2079488","BEACH TOWEL","비품","",0,"활성"],
+  ["2079660","KC MALVE 10 ML INT.","샘플","",0,"활성"],
+  ["90SP01","샘플","샘플","",0,"품절"],
+  ["90SP10","31 허브 오일 샘플","샘플","",4000,"품절"],
+  ["90SP12","밀크 샤워젤 샘플","비품","",390,"품절"],
+  ["90SP13","카렌듈라 크림 샘플","비품","",360,"품절"],
+  ["90SP14","라멜로뎀 크림 샘플","비품","",420,"품절"],
+  ["90SP15","카모마일 크림 샘플","비품","",240,"품절"],
+  ["90SP17","유카솔 샘플","비품","",8640,"품절"],
+  ["90SP20","마로니에 젤 샘플","비품","",360,"품절"],
+  ["90SP21","24h 크림 샘플","비품","",680,"품절"],
+  ["90SP22","페디 크림 샘플","비품","",260,"품절"],
+  ["90SP23","아르니카 크림 샘플","비품","",520,"품절"],
+  ["90SP24","NR 세제 샘플","비품","",780,"품절"],
+  ["90SP25","안티 스트레스 오일 샘플","비품","",60000,"품절"],
+  ["90SP26","아욱 로션 샘플","샘플","",0,"품절"],
+  ["90SP27","NEW 에델 알펜로제 필링 샘플","샘플","",0,"품절"],
+  ["90SP28","유스트 샘플 5종","샘플","",0,"품절"],
+  ["90SP30","라임민트 샤워젤 샘플","비품","",700,"품절"],
+  ["90SP31","밀크 샤워젤 샘플","비품","",700,"품절"],
+  ["90SP32","라임 민트 샤워젤 샘플 10ml","비품","",360,"품절"],
+  ["90SP33","유카솔 샘플*3","비품","",720,"품절"],
+  ["90SP33-1","유카솔 샘플*2","샘플","",0,"품절"],
+  ["91SELL10","총판매금액","비품","",0,"활성"],
+  ["91SP01-3","카모마일 핸드크림 3","샘플","",0,"품절"],
+  ["91SP02-10","NR세제 10","샘플","",0,"품절"],
+  ["91SP03-1.5","유카솔 1.5","비품","",0,"품절"],
+  ["95AD50","POP 아크릴 거치대","비품","",3300,"활성"],
+  ["95AD51","POP 아크릴 거치대","비품","",3900,"활성"],
+  ["95B200","명찰 아크릴","샘플","",0,"활성"],
+  ["95B201","명찰 스텐","비품","",12000,"활성"],
+  ["95D100","명함","비품","",9100,"활성"],
+  ["95IM01","배송비","비품","",2500,"품절"],
+  ["95IM04","마일리지(쇼핑몰적립금)","비품","",0,"활성"],
+  ["95M03","두피브러쉬NEW","비품","",2000,"활성"],
+  ["95M03-01","핸드 브러쉬","비품","",45000,"품절"],
+  ["95M04","G형박스(대)","비품","",1000,"활성"],
+  ["95M040","쇼핑백 소 1묶음 50개","비품","",0,"활성"],
+  ["95M041","쇼핑백 중 1묶음 50개","비품","",0,"활성"],
+  ["95M042","쇼핑백 대 1묶음 50개","비품","",0,"활성"],
+  ["95M043","쇼핑백 대 1개","비품","",700,"활성"],
+  ["95M044","쇼핑백 중 1개","비품","",500,"활성"],
+  ["95M045","쇼핑백 소 1개","비품","",500,"활성"],
+  ["95M05","반달박스(소) 50개","비품","",5000,"활성"],
+  ["95M05-01","반달박스(중) 50개","비품","",7500,"활성"],
+  ["95M05-02","반달박스(대) 50개","비품","",10000,"활성"],
+  ["95M071","뾰족용기","비품","",500,"활성"],
+  ["95M072","스프레이 용기","비품","",500,"활성"],
+  ["95M074","갈색 롤 온 공병 10ml [모든유통]","비품","",540,"활성"],
+  ["95M09","상품설명서","샘플","",0,"품절"],
+  ["95M10","7크림 선물박스","비품","",1000,"활성"],
+  ["95M11OS","유스트 가방_판매","비품","",30000,"활성"],
+  ["95M12","ㄷ자 아크릴","비품","",2000,"활성"],
+  ["95M13","ㄷ자 아크릴","비품","",2500,"활성"],
+  ["95M14","ㄷ자 아크릴","비품","",3500,"활성"],
+  ["95M17","쇼카드 케이스","비품","",300,"활성"],
+  ["95M18","로고 스티커(대)","비품","",0,"품절"],
+  ["95M19","로고 스티커(소)","비품","",0,"품절"],
+  ["95M22","유스트 파우치","비품","",5000,"품절"],
+  ["95M23","크림 꽂이","비품","",0,"활성"],
+  ["95M230","31 허브 오일 시향지","비품","",0,"활성"],
+  ["95M231","유카솔 시향지","비품","",0,"활성"],
+  ["95M232","카모마일 핸드크림 시향지","비품","",0,"활성"],
+  ["95M233","마사지 세트 77만원 상품권","비품","",0,"활성"],
+  ["95M24","캔들 (중)","비품","",0,"품절"],
+  ["95M25","마사지 봉 [스마트스토어]","비품","",500,"활성"],
+  ["95M25L","알프스 삼각박스 L","비품","",500,"활성"],
+  ["95M25MB","알프스 자석박스 (250*2)","비품","",4500,"활성"],
+  ["95M25S","알프스 삼각박스 S","비품","",500,"활성"],
+  ["95M25SS","수건 선물 세트","비품","",0,"품절"],
+  ["95M26","크림 짜개","비품","",2000,"활성"],
+  ["95M26MB","알프스 자석박스 (스파)","비품","",6300,"활성"],
+  ["95M27","원목 트레이","비품","",8000,"활성"],
+  ["95M27MB","알프스 자석박스 (백노삼)","비품","",4500,"활성"],
+  ["95M27OS","원목 트레이_판매","비품","",14900,"활성"],
+  ["95M28","500ml 공병","비품","",1000,"활성"],
+  ["95M300","유스트로고 리본(남색)","비품","",15000,"활성"],
+  ["95M301","유스트로고 리본(빨강)","비품","",15000,"활성"],
+  ["95M302","포장용 마끈","비품","",3000,"활성"],
+  ["95M31","유스트 괄사","비품","",6500,"활성"],
+  ["95M32","노루지 흰색","비품","",0,"활성"],
+  ["95M33","노루지 갈색","비품","",0,"활성"],
+  ["95M35","페이스 괄사","비품","",6500,"활성"],
+  ["95M36","두피 괄사","비품","",6500,"활성"],
+  ["95M37","수건 패키지","비품","",10000,"활성"],
+  ["95ZE11","유스트 마스크","비품","",1200,"활성"],
+  ["95ZE12","유스트 유니폼","비품","",85000,"품절"],
+  ["95ZE13","디퓨저","비품","",11000,"활성"],
+  ["95ZE14","대표님 책","비품","",3000,"활성"],
+  ["95ZE16","제품 카달로그 50개 묶음","비품","",0,"활성"],
+  ["95ZE17","백노삼설명서 백노삼팜플릿","샘플","",0,"활성"],
+  ["95ZE18","제품 카달로그 낱개","비품","",0,"활성"],
+  ["95ZE19","백노삼 설명서 1장","샘플","",0,"품절"],
+  ["95ZE20","유스트 로고 폴로 티셔츠(여-S)","비품","",0,"활성"],
+  ["95ZE21","유스트 로고 폴로 티셔츠(여-M)","비품","",0,"활성"],
+  ["95ZE22","유스트 로고 폴로 티셔츠(여-L)","비품","",0,"활성"],
+  ["95ZE23","유스트 로고 폴로 티셔츠(여-XL)","비품","",0,"활성"],
+  ["95ZE24","유스트 로고 폴로 티셔츠(남-M)","비품","",0,"활성"],
+  ["95ZE25","유스트 로고 폴로 티셔츠(남-L)","비품","",0,"활성"],
+  ["95ZE26","유스트 로고 폴로 티셔츠(남-XL)","비품","",0,"활성"],
+  ["95ZE27","유스트 로고 폴로 티셔츠(남-XXL)","비품","",0,"활성"],
+  ["95ZE30","백노삼 온라인 팜플릿","비품","",0,"활성"],
+  ["coupon","쿠폰","비품","",0,"활성"],
+  ["mileage","적립금/마일리지","비품","",0,"활성"],
+  ["P250515-001","카쇼라 증정 랜덤샘플","샘플","",0,"품절"],
+  ["P250929-002","95주년 핑크 파우치","비품","",0,"품절"],
+  ["prepaid","선결제","비품","",0,"활성"],
+  ["20006004","구두치 롤 온3+1","46138","",184000,"활성"],
+  ["2000719-P3","카모마일 핸드크림 30 세트","49674","",43000,"활성"],
+  ["200083088","베이직 헤어 케어 세트","46138","",157000,"활성"],
+  ["200086809","에델 페이스 영양라인 세트","46138","",166000,"활성"],
+  ["2069652-P3","가든크레스 크림 30 세트","49674","",69000,"활성"],
+  ["2070062-P3","아르니카 크림젤 30 세트","49674","",47000,"활성"],
+  ["2073060-P3","라멜로뎀 크림 30 세트","49674","",74000,"활성"],
+  ["2073061-P3","티트리 크림 30 세트","49674","",45000,"활성"],
+  ["2073551-P3","산액티브 크림 30 세트","49674","",33000,"활성"],
+  ["2073554-P3","카렌듈라 크림 30 세트","49674","",49000,"활성"],
+  ["2073555-P2","라벤더 크림 30 세트","49674","",31000,"활성"],
+  ["2073557-P3","노간주 크림 30 세트 S","49674","",49000,"활성"],
+  ["2073558-P3","백리향 크림 30 세트 S","49674","",48000,"활성"],
+  ["2073559-P3","페디 크림 30 세트","49674","",33000,"활성"],
+  ["2073560-P3","아욱 크림 30 세트","49674","",52000,"활성"],
+  ["85SA22-3","마로니에 젤 30 세트","49674","",45000,"활성"],
+  ["85SP14-75","백노삼 세트 75","—","",195000,"활성"],
+  ["86SB12-67","건강한 뷰티 스파 세트 Health & Beauty SPA (산액+유카솔)","—","",436800,"활성"],
+  ["86SB12-68","건강한 뷰티 스파 세트 Health & Beauty SPA (페디+유카솔)","—","",400800,"활성"],
+  ["86SP65","건강한 뷰티 스파 세트 Health & Beauty SPA (산액+페디)","—","",412000,"활성"],
+  ["P250901-001","스페셜 바디로션 3종 세트[아아라]","46142","",164000,"활성"],
+  ["P250929-001","알펜로제 페이스 스타터 세트","46142","",214500,"활성"],
+  ["P260109-001","샌달우드미니세트","46142","",73000,"활성"],
+  ["P260119-001","카모마일 미니 세트","46142","",42000,"활성"],
+  ["P260127-002","스페셜 바디로션 3종 세트 [밀아아]","46142","",147200,"활성"],
+  ["P260127-003","미니 3종 세트","46142","",70000,"활성"],
+  ["P260127-004","스프레이 세트","46142","",102400,"활성"],
+  ["P260301-001","스페셜 바디로션 3종 세트 [아아벨]","46142","",147200,"활성"],
+  ["P260401-001","알펜로제 베이직 세트","46142","",296000,"활성"],
+  ["P260401-002","샤워젤 세트","46142","",98000,"활성"]
+];
+
+let EXPIRY = {
+  "2000100": "2999-12-01",
+  "2000290": "2027-09-01",
+  "2000303": "2028-03-01",
+  "2000380": "2028-01-01",
+  "2000381": "2027-04-01",
+  "2000382": "2028-05-01",
+  "2000383": "2028-05-01",
+  "2000384": "2027-04-01",
+  "2000386": "2026-01-01",
+  "2000389": "2027-08-01",
+  "2000398": "2027-10-01",
+  "2000399": "2026-12-01",
+  "2000400": "2028-04-01",
+  "2000409": "2028-08-01",
+  "2000461": "2027-09-01",
+  "2000490": "2029-01-01",
+  "2000504": "2027-11-01",
+  "2000507": "2028-04-01",
+  "2000509": "2028-08-01",
+  "2000510": "2028-03-01",
+  "2000581": "2028-02-01",
+  "2000600": "2027-08-01",
+  "2000603": "2027-02-01",
+  "2000614": "2027-05-01",
+  "2000615": "2026-04-01",
+  "2000629": "2027-11-01",
+  "2000652": "2027-05-01",
+  "2000694": "2028-08-01",
+  "2000695": "2028-04-01",
+  "2000696": "2028-04-01",
+  "2000697": "2028-02-01",
+  "2000738": "2028-02-01",
+  "2000830": "2028-08-01",
+  "2000838": "2028-04-01",
+  "2000840": "2028-07-01",
+  "2000841": "2027-05-01",
+  "2000860": "2028-05-01",
+  "2000861": "2028-08-01",
+  "2000862": "2028-07-01",
+  "2000863": "2027-12-01",
+  "2000864": "2028-04-01",
+  "2000865": "2027-04-01",
+  "2000866": "2027-11-01",
+  "2000867": "2028-07-01",
+  "2000868": "2028-05-01",
+  "2000869": "2028-01-01",
+  "2000870": "2028-02-01",
+  "2000871": "2028-04-01",
+  "2000872": "2028-02-01",
+  "2000873": "2027-08-01",
+  "2000890": "2028-04-01",
+  "2000892": "2028-03-01",
+  "2000894": "2027-09-01",
+  "2000960": "2027-10-01",
+  "2003312": "2028-07-01",
+  "2003367": "2028-01-01",
+  "2003376": "2027-08-01",
+  "2003449": "2028-04-01",
+  "2003459": "2028-05-01",
+  "2003462": "2028-04-01",
+  "2003464": "2028-02-01",
+  "2003494": "2027-10-01",
+  "2003500": "2028-08-01",
+  "2003503": "2028-06-01",
+  "2003509": "2028-04-01",
+  "2003511": "2028-06-01",
+  "2003512": "2028-02-01",
+  "2003514": "2028-07-01",
+  "2003515": "2028-07-01",
+  "2003517": "2028-08-01",
+  "2003518": "2028-07-01",
+  "2003519": "2027-09-01",
+  "2003521": "2028-03-01",
+  "2003526": "2028-07-01",
+  "2003547": "2027-08-01",
+  "2003550": "2024-08-01",
+  "2003558": "2028-04-01",
+  "2003588": "2028-08-01",
+  "2003598": "2028-02-01",
+  "2003625": "2027-08-01",
+  "2003639": "2028-04-01",
+  "2003651": "2028-04-01",
+  "2003693": "2028-03-01",
+  "2003702": "2027-12-01",
+  "2003721": "2028-05-01",
+  "2003751": "2028-09-01",
+  "2003754": "2027-06-01",
+  "2003755": "2028-06-01",
+  "2003756": "2028-07-01",
+  "2003771": "2028-04-01",
+  "2003774": "2028-07-01",
+  "2003782": "2027-10-01",
+  "2003801": "2027-07-01",
+  "2003802": "2028-04-01",
+  "2003804": "2028-02-01",
+  "2003806": "2027-07-01",
+  "2003816": "2028-01-01",
+  "2003825": "2027-11-01",
+  "2003826": "2028-07-01",
+  "2003827": "2028-04-01",
+  "2003839": "2028-02-01",
+  "2003850": "2028-02-01",
+  "2003851": "2027-08-01",
+  "2003995": "2028-07-01",
+  "2003997": "2028-01-01",
+  "2062628": "2028-05-01",
+  "2069652": "2027-01-01",
+  "2071229": "2026-07-01",
+  "2071694": "2028-01-01",
+  "2071695": "2027-07-01",
+  "2072210": "2028-02-01",
+  "2072403": "2028-01-01",
+  "2073060": "2027-10-01",
+  "2073061": "2028-02-01",
+  "2073062": "2028-02-01",
+  "2073268": "2027-09-01",
+  "2073470": "2028-02-01",
+  "2073551": "2027-11-01",
+  "2073554": "2028-02-01",
+  "2073555": "2028-02-01",
+  "2073557": "2028-03-01",
+  "2073558": "2028-02-01",
+  "2073560": "2027-11-01",
+  "2073628": "2028-02-01",
+  "2075301": "2027-07-01",
+  "2075988": "2026-02-01",
+  "2076783": "2027-09-01",
+  "2077408": "2027-02-01",
+  "2077410": "2027-04-01",
+  "2077413": "2026-11-01",
+  "2077818": "2027-03-01",
+  "2077877": "2026-01-01",
+  "2077971": "2027-04-01",
+  "2078109": "2027-07-01",
+  "2078297": "2026-06-01",
+  "2078609": "2027-05-01",
+  "2078611": "2027-04-01",
+  "2078614": "2027-04-01",
+  "2078750": "2027-01-01",
+  "2078847": "2027-07-01",
+  "2078849": "2027-02-01",
+  "2078853": "2027-02-01",
+  "2078939": "2027-09-01",
+  "2078941": "2027-03-01",
+  "2078943": "2027-09-01",
+  "2078970": "2027-08-01",
+  "2079009": "2027-12-01",
+  "P260311-001": "2028-05-01"
+};
+
+
+let EXPIRY_DB = [
+  ["2078943","31 허브 오일 20","2027-09-01",646],
+  ["2003515","31 허브 오일 75","2028-07-01",16968],
+  ["2003515","31 허브 오일 75","2028-05-01",148],
+  ["2000507","31 허브 오일 80","2027-09-01",4343],
+  ["2000507","31 허브 오일 80","2028-04-01",2322],
+  ["2003850","3민트 믹스 오일 10","2028-02-01",2080],
+  ["2003850","3민트 믹스 오일 10","2027-11-01",432],
+  ["2003702","가드니아 롤 온 10","2027-07-01",2066],
+  ["2003702","가드니아 롤 온 10","2026-09-01",38],
+  ["2003702","가드니아 롤 온 10","2027-12-01",2223],
+  ["2003702","가드니아 롤 온 10","2027-03-01",1485],
+  ["2003550","가든크레스 크림 100","2024-05-01",7],
+  ["2003550","가든크레스 크림 100","2024-08-01",7],
+  ["2003550","가든크레스 크림 100","비관리",1],
+  ["2069652","가든크레스 크림 30","2027-01-01",216],
+  ["2000600","구두치 롤 온 10","2027-08-01",13511],
+  ["2000696","노간주 바스에센스 125","2027-11-01",561],
+  ["2000696","노간주 바스에센스 125","2028-04-01",1000],
+  ["2003517","노간주 크림 100","2028-07-01",18816],
+  ["2003517","노간주 크림 100","2028-03-01",633],
+  ["2003517","노간주 크림 100","2028-08-01",6272],
+  ["2073557","노간주 크림 30","2028-03-01",5292],
+  ["2000386","다마스세나로즈 에델 토닉 150","2026-01-01",87],
+  ["2003464","더말 팽고 머드 팩 200","2027-07-01",199],
+  ["2003464","더말 팽고 머드 팩 200","2026-07-01",53],
+  ["2003464","더말 팽고 머드 팩 200","2028-02-01",300],
+  ["2003494","데드씨솔트 바디필링 150","2027-10-01",250],
+  ["2003494","데드씨솔트 바디필링 150","2026-08-01",21],
+  ["2003494","데드씨솔트 바디필링 150","2027-03-01",396],
+  ["2078750","데드씨솔트 바디필링 75","2027-01-01",1811],
+  ["2003558","데오 아욱 롤 온 50","2028-04-01",596],
+  ["2078939","데오 인팀 카모마일 50","2027-09-01",413],
+  ["2071229","덴탈 치약 세트 (라임 민트 & 아이리스 루트) 150","2026-07-01",67],
+  ["P260311-001","라멜로뎀 샤워젤 - NEW","2028-05-01",1400],
+  ["2000652","라멜로뎀 샤워젤 200","2027-05-01",679],
+  ["2003651","라멜로뎀 크림 100","2028-04-01",616],
+  ["2003651","라멜로뎀 크림 100","2027-08-01",6496],
+  ["2003651","라멜로뎀 크림 100","2027-05-01",1462],
+  ["2072403","라멜로뎀 크림 30","2028-01-01",1504],
+  ["2000603","라멜로뎀 SOS 세럼 50","2027-02-01",296],
+  ["2003367","라벤더 스프레이 115","2028-01-01",1728],
+  ["2003367","라벤더 스프레이 115","2027-01-01",561],
+  ["2003367","라벤더 스프레이 115","2027-05-01",1206],
+  ["2003367","라벤더 스프레이 115","2027-09-01",1056],
+  ["2003804","라벤더 오일 10","2028-02-01",240],
+  ["2003804","라벤더 오일 10","2026-06-01",26],
+  ["2003804","라벤더 오일 10","2027-11-01",1213],
+  ["2003804","라벤더 오일 10","2027-01-01",686],
+  ["2073555","라벤더 크림 30","2028-02-01",758],
+  ["2073555","라벤더 크림 30","2026-12-01",139],
+  ["2003509","라벤더 크림 60","2028-04-01",1224],
+  ["2003509","라벤더 크림 60","2028-02-01",133],
+  ["2000400","라임&민트 샤워젤 250","2028-04-01",288],
+  ["2000400","라임&민트 샤워젤 250","2026-08-01",25],
+  ["2000400","라임&민트 샤워젤 250","2027-07-01",1184],
+  ["2000400","라임&민트 샤워젤 250","2026-12-01",259],
+  ["2003801","레몬 오일 10","2027-07-01",4960],
+  ["2003801","레몬 오일 10","2027-06-01",6872],
+  ["2073268","룸스프레이 레몬 200","2027-09-01",84],
+  ["2073268","룸스프레이 레몬 200","2027-05-01",54],
+  ["2000615","리프팅 플루이드 100","2026-04-01",32],
+  ["2000382","릴렉스 바스 250","2028-05-01",314],
+  ["2003598","마로니에 젤 100","2028-02-01",336],
+  ["2003598","마로니에 젤 100","2027-08-01",1404],
+  ["2073628","마로니에 젤 30","2028-02-01",807],
+  ["2003625","멀베리 크림 100","2027-05-01",4957],
+  ["2003625","멀베리 크림 100","2027-08-01",392],
+  ["2078970","멀베리 크림 30","2027-08-01",1],
+  ["2078970","멀베리 크림 30","비관리",15],
+  ["2076783","메디테이션 오일 10","2026-10-01",1159],
+  ["2076783","메디테이션 오일 10","2027-09-01",1654],
+  ["2000694","멜리사 바스에센스 125","2027-12-01",900],
+  ["2000694","멜리사 바스에센스 125","2028-08-01",100],
+  ["2000694","멜리사 바스에센스 125","2027-04-01",20],
+  ["2000461","밀크 로션 250","2027-09-01",33],
+  ["2003459","밀크 샤워젤 250","2028-05-01",741],
+  ["2000100","바디 마사지 브러쉬","2999-12-01",196],
+  ["2000100","바디 마사지 브러쉬","비관리",1],
+  ["2003774","바디 프레쉬 젤 100","2027-07-01",732],
+  ["2003774","바디 프레쉬 젤 100","2028-07-01",1792],
+  ["2000510","바디케어 오일 125","2027-12-01",315],
+  ["2000510","바디케어 오일 125","2027-10-01",240],
+  ["2000510","바디케어 오일 125","2028-03-01",1800],
+  ["2075988","바스에센스 세트 20x4 S","2026-02-01",52],
+  ["2000697","백리향 바스에센스 125","2028-02-01",1695],
+  ["2003518","백리향 크림 100","2027-12-01",1149],
+  ["2003518","백리향 크림 100","2028-07-01",12544],
+  ["2003518","백리향 크림 100","2028-04-01",3136],
+  ["2073558","백리향 크림 30","2028-02-01",549],
+  ["2003851","밸런스 조이 롤 온 10","2027-08-01",980],
+  ["2000872","벨벳 스킨 바디로션 200","2028-02-01",1302],
+  ["2000872","벨벳 스킨 바디로션 200","2027-07-01",59],
+  ["2000384","사차인치 샤워오일 200","2027-04-01",115],
+  ["2000490","산액티브 솔트 500","2029-01-01",960],
+  ["2000490","산액티브 솔트 500","2028-10-01",1750],
+  ["2003512","산액티브 크림 100","2028-02-01",336],
+  ["2003512","산액티브 크림 100","2027-10-01",728],
+  ["2003512","산액티브 크림 100","2027-07-01",643],
+  ["2073551","산액티브 크림 30","2027-11-01",87],
+  ["2079009","샌달우드 데오 스프레이 30","2027-12-01",467],
+  ["2071695","샌달우드 바디 버터 100","2027-07-01",335],
+  ["2000695","샌달우드 바스에센스 125","2027-04-01",21],
+  ["2000695","샌달우드 바스에센스 125","2028-04-01",1000],
+  ["2071694","샌달우드 샤워젤 125","2028-01-01",383],
+  ["2000383","성요한초 바스 250","2028-05-01",163],
+  ["2000614","쉐이핑 바디 플루이드 200","2026-04-01",44],
+  ["2000614","쉐이핑 바디 플루이드 200","2027-05-01",96],
+  ["2000303","스테인 리무버 75","2027-07-01",556],
+  ["2000303","스테인 리무버 75","2028-03-01",224],
+  ["2003827","스트레스 헤어 샴푸 250","2028-04-01",160],
+  ["2003827","스트레스 헤어 샴푸 250","2026-08-01",80],
+  ["2003827","스트레스 헤어 샴푸 250","2027-09-01",1531],
+  ["2000841","스트롱 헤어 마스크 150","2027-05-01",947],
+  ["2000840","스트롱 헤어 샴푸 250","2027-11-01",20],
+  ["2000840","스트롱 헤어 샴푸 250","2028-07-01",1792],
+  ["P260127-002","스페셜 바디로션 3종 세트 [밀아아]","비관리",1],
+  ["2003826","실키 헤어 샴푸 250","2028-07-01",1184],
+  ["2003826","실키 헤어 샴푸 250","2027-12-01",23],
+  ["2003503","아르니카 크림젤 100","2028-06-01",4088],
+  ["2003503","아르니카 크림젤 100","2027-07-01",118],
+  ["2073062","아르니카 크림젤 30","2028-02-01",132],
+  ["2073062","아르니카 크림젤 30","2027-09-01",792],
+  ["2073062","아르니카 크림젤 30","2027-01-01",423],
+  ["2003756","아몬드 밀크 로션 250","2028-04-01",110],
+  ["2003756","아몬드 밀크 로션 250","2028-07-01",1792],
+  ["2003756","아몬드 밀크 로션 250","2028-05-01",128],
+  ["2003521","아욱 로션 250","2028-03-01",800],
+  ["2003521","아욱 로션 250","2027-09-01",2170],
+  ["2000504","아욱 바디 버터 150","2027-07-01",35],
+  ["2000504","아욱 바디 버터 150","2027-11-01",1392],
+  ["2003449","아욱 샤워폼 300","2028-04-01",1542],
+  ["2003526","아욱 크림 100","2028-07-01",1512],
+  ["2003526","아욱 크림 100","2028-05-01",1113],
+  ["2073560","아욱 크림 30","2027-11-01",671],
+  ["2078847","아펜젤러 헤이플라워 크림 30","2027-07-01",155],
+  ["2003693","아펜젤러 헤이플라워 크림 50","2028-02-01",1175],
+  ["2003693","아펜젤러 헤이플라워 크림 50","2028-03-01",2080],
+  ["2003995","안티 스트레스 오일 10","2028-07-01",2889],
+  ["2003519","알프스 허브밤 13","2027-03-01",4113],
+  ["2003519","알프스 허브밤 13","2027-09-01",1050],
+  ["2003519","알프스 허브밤 13","2026-10-01",381],
+  ["2003519","알프스 허브밤 13","2026-11-01",1185],
+  ["2003997","에너지 플러스 오일 10","2026-09-01",2],
+  ["2003997","에너지 플러스 오일 10","2026-07-01",13],
+  ["2003997","에너지 플러스 오일 10","2027-11-01",2],
+  ["2003997","에너지 플러스 오일 10","2028-01-01",2080],
+  ["2077413","에델 알펜로제 24H 크림 30","2026-11-01",1394],
+  ["2077413","에델 알펜로제 24H 크림 30","비관리",8],
+  ["2078611","에델 알펜로제 마스크 30","2027-04-01",2292],
+  ["2078609","에델 알펜로제 아이크림 15","2027-05-01",2016],
+  ["2077971","에델 알펜로제 클렌징젤 50","2026-02-01",466],
+  ["2077971","에델 알펜로제 클렌징젤 50","2027-04-01",1620],
+  ["2000381","에델바이스 바스 250","2027-04-01",397],
+  ["2000381","에델바이스 바스 250","2027-01-01",35],
+  ["2003500","에델바이스 발삼 250 S","2028-08-01",7040],
+  ["2003500","에델바이스 발삼 250 S","2028-05-01",326],
+  ["2000509","에델바이스 발삼 500","2028-08-01",1920],
+  ["2000509","에델바이스 발삼 500","2028-05-01",165],
+  ["2000409","에크나시아 바스에센스 75","2026-10-01",36],
+  ["2000409","에크나시아 바스에센스 75","2028-01-01",1008],
+  ["2000409","에크나시아 바스에센스 75","2027-04-01",50],
+  ["2000409","에크나시아 바스에센스 75","2028-08-01",336],
+  ["2003312","엔알(NR) 세제 1000","2028-04-01",160],
+  ["2003312","엔알(NR) 세제 1000","2027-07-01",189],
+  ["2003312","엔알(NR) 세제 1000","2026-01-01",6],
+  ["2003312","엔알(NR) 세제 1000","2028-07-01",1024],
+  ["2062628","엔알(NR) 세제 500","2028-05-01",395],
+  ["2062628","엔알(NR) 세제 500","비관리",3],
+  ["2003806","오렌지 오일 10","2026-04-01",130],
+  ["2003806","오렌지 오일 10","2027-02-01",163],
+  ["2003806","오렌지 오일 10","2026-08-01",7],
+  ["2003806","오렌지 오일 10","2027-07-01",3040],
+  ["2078109","유카솔 30","2027-07-01",481],
+  ["2078109","유카솔 30","비관리",6],
+  ["2000581","유카솔 75","2028-02-01",3136],
+  ["2000581","유카솔 75","2027-07-01",9408],
+  ["2000581","유카솔 75","2027-04-01",2628],
+  ["2000290","유카솔 솔트 250","2027-09-01",265],
+  ["2003802","유칼리 오일 10","2027-08-01",398],
+  ["2003802","유칼리 오일 10","2028-04-01",1520],
+  ["2003839","익스프레스 리페어 세럼 120","2026-10-01",49],
+  ["2003839","익스프레스 리페어 세럼 120","2028-02-01",2100],
+  ["2003839","익스프레스 리페어 세럼 120","2027-03-01",32],
+  ["2000398","쟈스민&알로에 샤워젤 250","2027-10-01",288],
+  ["2000398","쟈스민&알로에 샤워젤 250","2026-07-01",12],
+  ["2000398","쟈스민&알로에 샤워젤 250","2026-11-01",193],
+  ["2000738","카렌듈라 립밤","2026-10-01",468],
+  ["2000738","카렌듈라 립밤","2027-08-01",329],
+  ["2000738","카렌듈라 립밤","2028-02-01",2990],
+  ["2003514","카렌듈라 크림 100","2028-04-01",1],
+  ["2003514","카렌듈라 크림 100","2028-07-01",1792],
+  ["2073554","카렌듈라 크림 30","2028-02-01",342],
+  ["2003721","카모마일 핸드크림 100","2027-10-01",4390],
+  ["2003721","카모마일 핸드크림 100","2028-05-01",224],
+  ["2073470","카모마일 핸드크림 30","2028-02-01",3165],
+  ["2078941","카모마일&바닐라 바디로션 100","2027-03-01",11],
+  ["2000892","칼모덤 바디로션 200","2028-03-01",265],
+  ["2000894","칼모덤 스칼프 플루이드 200","2027-09-01",1201],
+  ["2000890","칼모덤 페이스크림 50","2028-04-01",2442],
+  ["2003547","컴프리 젤 100","2027-08-01",1176],
+  ["2003547","컴프리 젤 100","2027-04-01",152],
+  ["2003462","케어&리페어 오일 40","2028-04-01",1513],
+  ["2078853","콘민트 바디로션 100","2027-02-01",141],
+  ["2078849","콘민트 샤워&샴푸 100","2027-02-01",645],
+  ["2000629","쿠퍼로즈 세럼","2027-11-01",3039],
+  ["2072210","클라리세이지 75","2028-02-01",112],
+  ["2072210","클라리세이지 75","2027-10-01",198],
+  ["2078297","트루 러브 오일 10","2026-06-01",18],
+  ["2078297","트루 러브 오일 10","비관리",6],
+  ["2003588","티트리 샴푸 250","2028-06-01",1165],
+  ["2003588","티트리 샴푸 250","2028-08-01",3840],
+  ["2003816","티트리 오일 10","2028-01-01",4480],
+  ["2003816","티트리 오일 10","2027-12-01",1200],
+  ["2003816","티트리 오일 10","2027-08-01",473],
+  ["2003511","티트리 크림 100","2024-03-01",394],
+  ["2003511","티트리 크림 100","2028-06-01",3584],
+  ["2003511","티트리 크림 100","2024-07-01",47],
+  ["2003511","티트리 크림 100","2028-02-01",305],
+  ["2073061","티트리 크림 30","2028-02-01",528],
+  ["2073061","티트리 크림 30","2027-08-01",396],
+  ["2073061","티트리 크림 30","2024-06-01",30],
+  ["2073061","티트리 크림 30","2027-02-01",151],
+  ["2003825","파인 오일 10","2027-11-01",1280],
+  ["2003825","파인 오일 10","2027-10-01",304],
+  ["2003825","파인 오일 10","2026-11-01",368],
+  ["2003755","패스트 프로텍션 핸드크림 75","2028-06-01",616],
+  ["2003755","패스트 프로텍션 핸드크림 75","2027-07-01",44],
+  ["2003751","페디 솔트 500","2028-09-01",2160],
+  ["2003751","페디 솔트 500","2028-08-01",214],
+  ["2003771","페디 크림 100","2028-04-01",224],
+  ["2003771","페디 크림 100","2027-06-01",363],
+  ["2073060","페디 크림 30","2027-10-01",2460],
+  ["2075301","페디본 스프레이 30","2027-07-01",454],
+  ["2075301","페디본 스프레이 30","비관리",6],
+  ["2003782","페디본 스프레이 75","2027-10-01",379],
+  ["2000960","페이스크림 (SPF 30)","2025-12-01",6],
+  ["2000960","페이스크림 (SPF 30)","2027-10-01",1506],
+  ["2003376","퓨리파잉 클렌져&마스크 100","2026-08-01",110],
+  ["2003376","퓨리파잉 클렌져&마스크 100","2027-08-01",129],
+  ["2078614","프로방스로즈 필링 30","2027-04-01",1989],
+  ["2000389","프로방스로즈 필링 50","2027-08-01",201],
+  ["2000380","해초 바스 250","2028-01-01",339],
+  ["2000380","해초 바스 250","2027-03-01",107],
+  ["2000399","해초 샤워젤 250","2026-12-01",14],
+  ["2003754","핸드 세럼 안티 스팟 30","2027-06-01",1746],
+  ["2000838","헤어 로션 스프레이 75","2028-04-01",613],
+  ["2000830","헤어 리페어 밤 150","2028-04-01",1687],
+  ["2000830","헤어 리페어 밤 150","2028-08-01",1000],
+  ["2077818","화이트 블로썸 오일 10","2027-03-01",312],
+  ["2003639","NEW 리파이닝 페이스 토닉","2028-04-01",288],
+  ["2003639","NEW 리파이닝 페이스 토닉","비관리",1],
+  ["2003639","NEW 리파이닝 페이스 토닉","2027-09-01",204],
+  ["2000873","NEW 씨씨(CC) 크림 미디움(베이지) 30","2026-10-01",125],
+  ["2000873","NEW 씨씨(CC) 크림 미디움(베이지) 30","2027-08-01",720],
+  ["2000873","NEW 씨씨(CC) 크림 미디움(베이지) 30","2027-02-01",267],
+  ["2000868","NEW 에델 알펜로제 24H 크림 50","2028-05-01",2220],
+  ["2000868","NEW 에델 알펜로제 24H 크림 50","2027-07-01",101],
+  ["2077410","NEW 에델 알펜로제 나이트크림 30","2027-04-01",1961],
+  ["2000867","NEW 에델 알펜로제 나이트크림 50","2028-03-01",120],
+  ["2000867","NEW 에델 알펜로제 나이트크림 50","2027-03-01",261],
+  ["2000867","NEW 에델 알펜로제 나이트크림 50","2028-07-01",600],
+  ["2077408","NEW 에델 알펜로제 데이크림 30","2027-02-01",2004],
+  ["2077408","NEW 에델 알펜로제 데이크림 30","2025-12-01",6],
+  ["2000866","NEW 에델 알펜로제 데이크림 50","2026-08-01",84],
+  ["2000866","NEW 에델 알펜로제 데이크림 50","2026-11-01",29],
+  ["2000866","NEW 에델 알펜로제 데이크림 50","2027-11-01",600],
+  ["2000865","NEW 에델 알펜로제 마스크 75","2027-02-01",306],
+  ["2000865","NEW 에델 알펜로제 마스크 75","2027-04-01",126],
+  ["2000861","NEW 에델 알펜로제 메이크업 리무버 150","2028-05-01",420],
+  ["2000861","NEW 에델 알펜로제 메이크업 리무버 150","2027-11-01",19],
+  ["2000861","NEW 에델 알펜로제 메이크업 리무버 150","2028-08-01",882],
+  ["2000869","NEW 에델 알펜로제 세럼 30 S","2027-10-01",396],
+  ["2000869","NEW 에델 알펜로제 세럼 30 S","2027-02-01",807],
+  ["2000869","NEW 에델 알펜로제 세럼 30 S","2028-01-01",1320],
+  ["2000871","NEW 에델 알펜로제 아이크림 30","2028-04-01",1206],
+  ["2077877","NEW 에델 알펜로제 클렌징 크림 50","2026-01-01",216],
+  ["2000863","NEW 에델 알펜로제 클렌징젤 125","2027-12-01",288],
+  ["2000863","NEW 에델 알펜로제 클렌징젤 125","2027-08-01",97],
+  ["2000864","NEW 에델 알펜로제 필링 50","2028-04-01",4],
+  ["2000870","NEW 에델 알펜로제 하이드로젤 50","2028-02-01",345],
+  ["2000870","NEW 에델 알펜로제 하이드로젤 50","2027-07-01",294],
+  ["2000862","NEW 에델바이스 알펜로제 클렌징 크림 125","2028-03-01",360],
+  ["2000862","NEW 에델바이스 알펜로제 클렌징 크림 125","2026-03-01",79],
+  ["2000862","NEW 에델바이스 알펜로제 클렌징 크림 125","2027-07-01",139],
+  ["2000862","NEW 에델바이스 알펜로제 클렌징 크림 125","2028-07-01",900],
+  ["2000860","NEW 에델바이스 알펜로제 토닉 150","2027-08-01",378],
+  ["2000860","NEW 에델바이스 알펜로제 토닉 150","2028-02-01",252],
+  ["2000860","NEW 에델바이스 알펜로제 토닉 150","2027-02-01",98],
+  ["2000860","NEW 에델바이스 알펜로제 토닉 150","2028-05-01",882],
+  ["P260227-001","P260227-001","비관리",2],
+  ["P260227-002","P260227-002","비관리",2],
+  ["P260227-003","P260227-003","비관리",9]
+];
+
+const SKIP_CATS = new Set(['샘플','비품','46138','46142','49674','—','','페이스 (기타)']);
+let CATS = [...new Set(DB.map(p => p[2]))].filter(c => c && !SKIP_CATS.has(c)).sort();
+const PLAN_CHANNELS = { gongu: '공구채널', live: '라이브채널' };
+
+// 저장소
+let plans = [];  // { id, name, channel, type(세트/단품), items:[{code,name,price,qty,gift}], discount, planQty, closed, createdAt }
+let currentPlanId = null;
+let currentChannel = null;
+let planEditMode = false; // 편집중인 기획 id
+
+// Supabase CRUD (channel_plans)
+async function savePlans() {
+  // 전체 plans 배열을 channel_plans 테이블에 upsert
+  try {
+    const rows = plans.map(p => ({
+      id: p.id,
+      name: p.name || '',
+      event_name: p.eventName || '',
+      event_date_start: p.eventDateStart || null,
+      event_date_end: p.eventDateEnd || null,
+      ship_date: p.shipDate || null,
+      channel: p.channel || '',
+      type: p.type || '세트',
+      items: p.items || [],
+      discount: p.discount || 0,
+      plan_qty: p.planQty || 1,
+      retail: p.retail || 0,
+      sale: p.sale || 0,
+      closed: !!p.closed
+    }));
+    const { error } = await sb.from('channel_plans').upsert(rows);
+    if (error) console.error('savePlans error:', error);
+  } catch(e) { console.error('savePlans exception:', e); }
 }
-async function doLogout(){ if(sb) await sb.auth.signOut(); location.reload(); }
 
-async function loadFromSupabase(){
-  if(!sb) return;
-  try{
-    // products → PRODUCT_DB
-    const {data:prods,error:pe}=await sb.from('products').select('id,name_ko,category,base_price,is_active');
-    if(pe) console.error('products load error:',pe);
-    if(prods){
-      Object.keys(PRODUCT_DB).forEach(k=>delete PRODUCT_DB[k]);
-      prods.forEach(p=>{
-        PRODUCT_DB[p.id]={
-          name:p.name_ko||'', cat:p.category||'',
-          price:Math.round(Number(p.base_price)||0),
-          status:p.is_active?'활성':'품절'
-        };
-      });
+async function loadPlans() {
+  try {
+    const { data, error } = await sb.from('channel_plans').select('*').order('created_at', { ascending: true });
+    if (error) { console.error('loadPlans error:', error); return; }
+    if (data) {
+      plans = data.map(r => ({
+        id: r.id,
+        name: r.name || '',
+        eventName: r.event_name || '',
+        eventDate: (r.event_date_start && r.event_date_end) ? `${r.event_date_start} ~ ${r.event_date_end}` : (r.event_date_start || ''),
+        eventDateStart: r.event_date_start || '',
+        eventDateEnd: r.event_date_end || '',
+        shipDate: r.ship_date || '',
+        channel: r.channel || '',
+        type: r.type || '세트',
+        items: (r.items || []).map(i => ({ code: i.code, name: i.name, price: Number(i.price)||0, qty: Number(i.qty)||1, gift: !!i.gift })),
+        discount: Number(r.discount) || 0,
+        planQty: Number(r.plan_qty) || 1,
+        retail: Number(r.retail) || 0,
+        sale: Number(r.sale) || 0,
+        closed: !!r.closed,
+        createdAt: r.created_at || ''
+      }));
     }
-    populateCatOptions('dbCatFilter');
-
-    // wholesale_plans → savedSets (memo = JSON meta)
-    const {data:plRows,error:ple}=await sb.from('wholesale_plans').select('*').order('created_at',{ascending:false});
-    if(ple) console.error('plans load error:',ple);
-    if(plRows){
-      savedSets.length=0;
-      plRows.forEach(p=>{
-        let meta={discount:0,setQty:1};
-        try{ const parsed=JSON.parse(p.memo||'{}'); if(parsed && typeof parsed==='object') meta={...meta,...parsed}; }catch(e){}
-        const items=p.items||[];
-        const retail=items.reduce((s,i)=>s+Number(i.price||0)*Number(i.qty||0),0);
-        const sale=Math.round(retail*(1-(meta.discount||0)/100));
-        const retailNoGift=items.reduce((s,i)=>s+(i.gift?0:Number(i.price||0)*Number(i.qty||0)),0);
-        const saleCalc=Math.round(retailNoGift*(1-(meta.discount||0)/100));
-        savedSets.push({
-          id:p.id, name:p.channel||'(이름없음)',
-          items:items.map(i=>({code:i.code,name:i.name,price:Number(i.price)||0,qty:Number(i.qty)||1,gift:!!i.gift})),
-          discount:Number(meta.discount)||0, setQty:Number(meta.setQty)||1, retail:retailNoGift, sale:saleCalc
-        });
-      });
-    }
-
-    // 초기 렌더 — 현재 활성 페이지 기준
-    const active=document.querySelector('.page.on')?.id||'page-planning';
-    const name=active.replace('page-','');
-    if(name==='planning'){ initPlanCatBtns(); renderPlanList(); renderSavedSets(); renderSetItems(); updateSummary(); }
-    else if(name==='productdb') renderDB();
-    else if(name==='logistics') buildLogistics();
-    else if(name==='summary') renderSummary();
-  }catch(e){ console.error('load error:',e); toast('데이터 로드 실패'); }
+  } catch(e) { console.error('loadPlans exception:', e); }
 }
 
-async function sbUpsertPlan(s){
-  if(!sb) return;
-  const memo=JSON.stringify({discount:s.discount||0, setQty:s.setQty||1});
-  const {error}=await sb.from('wholesale_plans').upsert({
-    id:s.id, channel:s.name||'', person:'',
-    from_date:null, to_date:null,
-    memo, status:'진행예정', items:s.items||[]
+// ══════════════ 유틸 ══════════════
+function fmt(n) { return n > 0 ? n.toLocaleString() + '원' : '—'; }
+function today() { return new Date().toLocaleDateString('ko-KR'); }
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function getBomCode(channel, idx) {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const prefix = channel === '공구채널' ? 'G' : 'L';
+  return `${prefix}${yy}${mm}${String(idx+1).padStart(2,'0')}`;
+}
+
+// ══════════════ 유통기한 DB ══════════════
+function renderExpiry() {
+  filterExpiry();
+}
+
+function filterExpiry() {
+  const q = document.getElementById('expSearch').value.toLowerCase();
+  const filter = document.getElementById('expFilter').value;
+  const dateInput = document.getElementById('expDateFilter')?.value.trim() || '';
+  const now = new Date();
+  const d90 = new Date(now.getTime() + 90*24*60*60*1000);
+  const d180 = new Date(now.getTime() + 180*24*60*60*1000);
+
+  // 날짜 필터 파싱 (2026 04, 2026-04, 2026.04 등)
+  let dateFrom = null;
+  if(dateInput) {
+    const cleaned = dateInput.replace(/[.\s]/g, '-');
+    const parts = cleaned.split('-').filter(Boolean);
+    if(parts.length >= 2) {
+      try { dateFrom = new Date(`${parts[0]}-${parts[1].padStart(2,'0')}-01`); } catch(e) {}
+    }
+  }
+
+  let items = EXPIRY_DB.map(row => {
+    const prod = DB.find(p => p[0] === row[0]);
+    const expDate = row[2] !== '비관리' ? new Date(row[2]) : null;
+    return { code: row[0], name: row[1], expStr: row[2], exp: expDate, total: row[3], status: prod ? prod[5] : '—' };
   });
-  if(error) console.error('plan sync error:',error);
-}
-async function sbDeletePlan(id){
-  if(!sb) return;
-  const {error}=await sb.from('wholesale_plans').delete().eq('id',id);
-  if(error) console.error('plan delete error:',error);
+
+  items = items.filter(item => {
+    if(q && !item.name.toLowerCase().includes(q) && !item.code.toLowerCase().includes(q)) return false;
+    if(!item.exp) return false;
+    if(dateFrom && item.exp < dateFrom) return false;
+    if(filter === 'danger' && item.exp > d90) return false;
+    if(filter === 'warn' && (item.exp <= d90 || item.exp > d180)) return false;
+    if(filter === 'ok' && item.exp <= d180) return false;
+    return true;
+  });
+
+  items.sort((a,b) => a.exp - b.exp);
+
+  document.getElementById('expCount').textContent = items.length + '건';
+  const tbody = document.getElementById('expTbody');
+  tbody.innerHTML = '';
+
+  items.forEach(item => {
+    const isDanger = item.exp <= d90;
+    const isWarn = item.exp <= d180 && item.exp > d90;
+    const color = isDanger ? 'var(--red)' : isWarn ? '#e67e22' : 'var(--gray2)';
+    const bg = isDanger ? '#fff0f2' : isWarn ? '#fffbf0' : 'white';
+    const label = isDanger ? ' ⚠ 임박' : isWarn ? ' 주의' : '';
+    const tr = document.createElement('tr');
+    tr.style.background = bg;
+    tr.innerHTML = `
+      <td style="font-size:11px;color:var(--gray3);">${item.code}</td>
+      <td class="bold">${item.name}</td>
+      <td style="text-align:center;font-weight:700;color:${color};">${item.expStr}${label}</td>
+      <td style="text-align:center;font-weight:700;color:#1a5276;">${item.total.toLocaleString()}</td>
+      <td style="text-align:center;"><span class="badge badge-${item.status==='활성'?'active':'soldout'}">${item.status}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
-// ═══════════════════ 앱 초기화 ═══════════════════
-(async function(){
-  if(!sb){
-    document.getElementById('app-wrap').style.display='';
-    initPlanCatBtns(); renderPlanList(); renderSavedSets(); renderSetItems(); updateSummary();
+
+function initDB() {
+  const sel = document.getElementById('dbCat');
+  CATS.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    sel.appendChild(o);
+  });
+  filterDB();
+}
+
+function filterDB() {
+  const q = document.getElementById('dbSearch').value.toLowerCase();
+  const cat = document.getElementById('dbCat').value;
+  const abc = document.getElementById('dbAbc').value;
+  const st = document.getElementById('dbStatus').value;
+  const filtered = DB.filter(p => {
+    if(q && !p[1].toLowerCase().includes(q) && !p[0].toLowerCase().includes(q)) return false;
+    if(cat && p[2] !== cat) return false;
+    if(abc && p[3] !== abc) return false;
+    if(st && p[5] !== st) return false;
+    return true;
+  });
+  document.getElementById('dbCount').textContent = filtered.length + '건';
+  const tbody = document.getElementById('dbTbody');
+  tbody.innerHTML = '';
+  filtered.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:11px;color:var(--gray3);">${p[0]}</td>
+      <td class="bold">${p[1]}</td>
+      <td>${p[2]}</td>
+      <td class="center"><span class="badge badge-${p[3].toLowerCase()}">${p[3]}</span></td>
+      <td class="right">${fmt(p[4])}</td>
+      <td class="center"><span class="badge badge-${p[5]==='활성'?'active':'soldout'}">${p[5]}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ══════════════ 기획 페이지 렌더 ══════════════
+function renderPlanPage(channel) {
+  const key = channel === '공구채널' ? 'gongu' : 'live';
+  const wrap = document.getElementById(`planContent-${key}`);
+  const eventLabel = channel === '공구채널' ? '공구건명' : '라이브건명';
+  const dateLabel = channel === '공구채널' ? '공구기간' : '라이브일자';
+
+  wrap.innerHTML = `
+    <!-- ── 상단: 공구건 정보 ── -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header flex-between">
+        <span class="card-title">${eventLabel} 정보</span>
+        <div class="flex" style="gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','mgmt',this);document.getElementById('excelArea_${key}').style.display='block'">관리</button>
+          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','bom',this);document.getElementById('excelArea_${key}').style.display='block'">BOM</button>
+          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','logistics',this);document.getElementById('excelArea_${key}').style.display='block'">물류</button>
+        </div>
+      </div>
+      <div style="padding:14px;display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">인플루언서</div>
+          <input type="text" class="inp-box" id="eventName_${key}" placeholder="예) 두열무네" style="width:180px;font-size:14px;font-weight:700;">
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">공구기간</div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="date" class="inp-box" id="eventDateStart_${key}" style="width:140px;">
+            <span style="color:var(--gray3);font-weight:700;">~</span>
+            <input type="date" class="inp-box" id="eventDateEnd_${key}" style="width:140px;">
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">배송시작일</div>
+          <input type="date" class="inp-box" id="shipDate_${key}" style="width:140px;">
+        </div>
+        <div id="excelArea_${key}" style="display:none;">
+          <button class="btn btn-red btn-sm" onclick="downloadExcel('${key}','mgmt')" id="excelBtn_${key}">📥 엑셀 다운로드</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 하단: 3열 레이아웃 ── -->
+    <div style="display:grid;grid-template-columns:360px 1fr 260px;gap:14px;min-height:600px;">
+
+      <!-- 왼쪽: 제품 검색 -->
+      <div class="card" style="display:flex;flex-direction:column;">
+        <div class="card-header"><span class="card-title">제품 검색</span></div>
+        <div style="padding:10px;flex:1;display:flex;flex-direction:column;gap:8px;">
+          <input type="text" class="inp-box" style="width:100%;" placeholder="제품명 또는 코드..." id="planSearch_${key}" oninput="filterPlanSearch('${key}')">
+          <div class="chan-btns" id="planCatBtns_${key}" style="flex-wrap:wrap;"></div>
+          <div class="prod-search-list" style="flex:1;" id="planProdList_${key}"></div>
+        </div>
+      </div>
+
+      <!-- 중앙: 세트 기획 편집 -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">세트 기획</span>
+          <div class="spacer"></div>
+          <button class="btn btn-ghost btn-sm" onclick="clearEditor('${key}')">초기화</button>
+          <button class="btn btn-black btn-sm" onclick="savePlan('${key}','${channel}')">💾 저장</button>
+        </div>
+        <div style="padding:12px;">
+          <!-- 기획명 + 타입 + 수량 -->
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid var(--black);">
+            <input type="text" class="inp" id="planName_${key}" placeholder="기획명 (예: 빅스파세트)" style="flex:1;font-size:14px;font-weight:700;">
+            <div class="type-btns">
+              <button class="type-btn active" id="typeSet_${key}" onclick="setType('${key}','세트')">세트</button>
+              <button class="type-btn" id="typeSingle_${key}" onclick="setType('${key}','단품')">단품</button>
+            </div>
+            <div class="flex" style="gap:5px;">
+              <span style="font-size:11px;color:var(--gray2);white-space:nowrap;">기획수량</span>
+              <input type="number" class="inp-box" id="planQty_${key}" value="1" min="1" style="width:64px;font-size:14px;font-weight:700;text-align:center;" oninput="refreshEditor('${key}')">
+              <span style="font-size:11px;color:var(--gray2);">개</span>
+            </div>
+          </div>
+
+          <div style="font-size:11px;color:var(--gray3);margin-bottom:8px;">← 왼쪽에서 제품 클릭하면 추가됩니다</div>
+
+          <!-- 구성 아이템 -->
+          <div style="min-height:140px;border:2px dashed var(--gray4);background:var(--gray6);padding:10px;margin-bottom:12px;" id="compList_${key}">
+            <div style="text-align:center;padding:30px 0;color:var(--gray4);font-size:11px;font-weight:700;letter-spacing:1px;" id="compHint_${key}">제품을 추가하세요</div>
+            <div id="compItems_${key}"></div>
+          </div>
+
+          <!-- 요약 -->
+          <div class="summary-box">
+            <div class="sum-row"><span class="lbl">구성</span><span class="val" id="sumComp_${key}">0종</span></div>
+            <div class="sum-row"><span class="lbl">합산 정가</span><span class="val" id="sumRetail_${key}">0원</span></div>
+            <div class="disc-row">
+              <span class="disc-lbl">할인율</span>
+              <input type="number" class="disc-inp" id="discRate_${key}" value="28" min="0" max="100" oninput="refreshSummary('${key}')">
+              <span class="disc-lbl">%</span>
+            </div>
+            <div class="sum-row total"><span class="lbl">기획가 (1세트)</span><span class="val" id="sumSale_${key}">0원</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 오른쪽: 저장된 기획 목록 (세로) -->
+      <div class="card" style="display:flex;flex-direction:column;">
+        <div class="card-header flex-between">
+          <span class="card-title">기획 목록</span>
+          <button class="btn btn-red btn-sm" onclick="newPlan('${channel}')">+ 새 기획</button>
+        </div>
+        <div style="flex:1;overflow-y:auto;" id="planCards_${key}"></div>
+      </div>
+
+    </div>
+  `;
+
+  initPlanSearch(key);
+  renderPlanCards(key, channel);
+}
+
+// ── 제품 검색 초기화 ──
+let planCatFilter = {};
+let planSearchFilter = {};
+
+function initPlanSearch(key) {
+  planCatFilter[key] = 'all';
+  planSearchFilter[key] = '';
+  const btns = document.getElementById(`planCatBtns_${key}`);
+  btns.innerHTML = '<button class="chan-btn active" onclick="setPlanCat(\''+key+'\',\'all\',this)">전체</button>';
+  CATS.forEach(c => {
+    btns.innerHTML += `<button class="chan-btn" onclick="setPlanCat('${key}','${c}',this)">${c}</button>`;
+  });
+  renderPlanSearch(key);
+}
+
+function setPlanCat(key, cat, btn) {
+  planCatFilter[key] = cat;
+  document.querySelectorAll(`#planCatBtns_${key} .chan-btn`).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderPlanSearch(key);
+}
+
+function filterPlanSearch(key) {
+  planSearchFilter[key] = document.getElementById(`planSearch_${key}`).value.toLowerCase();
+  renderPlanSearch(key);
+}
+
+function renderPlanSearch(key) {
+  const q = planSearchFilter[key] || '';
+  const cat = planCatFilter[key] || 'all';
+  const list = document.getElementById(`planProdList_${key}`);
+  list.innerHTML = '';
+  const filtered = DB.filter(p => {
+    if(cat !== 'all' && p[2] !== cat) return false;
+    if(q && !p[1].toLowerCase().includes(q) && !p[0].toLowerCase().includes(q)) return false;
+    // 품절 포함 전체 표시
+    return true;
+  });
+  if(filtered.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray3);font-size:11px;">검색 결과 없음</div>';
     return;
   }
-  const {data:{session}}=await sb.auth.getSession();
-  if(session){
-    document.getElementById('auth-overlay').style.display='none';
-    document.getElementById('app-wrap').style.display='';
-    await loadFromSupabase();
-  } else {
-    document.getElementById('auth-overlay').style.display='flex';
+  filtered.sort((a,b) => a[1].localeCompare(b[1], 'ko'));
+  filtered.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'prod-item';
+    div.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="prod-item-name">${p[1]}</span><span class="prod-item-price">${fmt(p[4])}</span></div>`;
+    div.onclick = () => addToEditor(key, p);
+    list.appendChild(div);
+  });
+}
+
+// ── 편집기 ──
+let editors = {};
+
+function getEditor(key) {
+  if(!editors[key]) editors[key] = { items: [], type: '세트' };
+  return editors[key];
+}
+
+function setType(key, type) {
+  getEditor(key).type = type;
+  document.getElementById(`typeSet_${key}`).classList.toggle('active', type === '세트');
+  document.getElementById(`typeSingle_${key}`).classList.toggle('active', type === '단품');
+}
+
+function addToEditor(key, p) {
+  const ed = getEditor(key);
+  const existing = ed.items.find(i => i.code === p[0]);
+  if(existing) { existing.qty++; }
+  else { ed.items.push({ code: p[0], name: p[1], price: p[4], qty: 1, gift: false }); }
+  refreshEditor(key);
+}
+
+function refreshEditor(key) {
+  const ed = getEditor(key);
+  const hint = document.getElementById(`compHint_${key}`);
+  const items = document.getElementById(`compItems_${key}`);
+  hint.style.display = ed.items.length > 0 ? 'none' : 'block';
+  items.innerHTML = '';
+  const planQty = parseInt(document.getElementById(`planQty_${key}`)?.value) || 1;
+  ed.items.forEach((item, idx) => {
+    const needed = item.qty * planQty;
+    const div = document.createElement('div');
+    div.className = 'comp-item';
+    div.innerHTML = `
+      <div class="comp-num">${idx+1}</div>
+      <div class="comp-info">
+        <div class="comp-code">${item.code}</div>
+        <div class="comp-name">${item.name}</div>
+        <div class="comp-price">${fmt(item.price)}</div>
+      </div>
+      <div style="text-align:center;min-width:40px;">
+        <div style="font-size:9px;color:var(--gray3);">세트당</div>
+        <input type="number" class="comp-qty" value="${item.qty}" min="1" onchange="updQty('${key}',${idx},this.value)">
+      </div>
+      <div style="text-align:center;min-width:48px;">
+        <div style="font-size:9px;color:var(--gray3);">필요수량</div>
+        <div style="font-size:14px;font-weight:900;color:var(--red);">${needed}</div>
+      </div>
+      <label class="comp-gift">
+        <input type="checkbox" ${item.gift?'checked':''} onchange="updGift('${key}',${idx},this.checked)"> 증정
+      </label>
+      <button class="comp-del" onclick="delComp('${key}',${idx})">×</button>
+    `;
+    items.appendChild(div);
+  });
+  refreshSummary(key);
+}
+
+function updQty(key, idx, val) { getEditor(key).items[idx].qty = parseInt(val)||1; refreshEditor(key); }
+function updGift(key, idx, val) { getEditor(key).items[idx].gift = val; }
+function delComp(key, idx) { getEditor(key).items.splice(idx,1); refreshEditor(key); }
+
+function refreshSummary(key) {
+  const ed = getEditor(key);
+  const disc = parseInt(document.getElementById(`discRate_${key}`)?.value) || 0;
+  const total = ed.items.reduce((s,i) => s + i.price * i.qty, 0);
+  const sale = Math.round(total * (1 - disc/100));
+  document.getElementById(`sumComp_${key}`).textContent = ed.items.length + '종';
+  document.getElementById(`sumRetail_${key}`).textContent = fmt(total);
+  document.getElementById(`sumSale_${key}`).textContent = fmt(sale);
+}
+
+function clearEditor(key) {
+  if(getEditor(key).items.length > 0 && !confirm('초기화할까요?')) return;
+  editors[key] = { items: [], type: '세트' };
+  // 공구건 정보(인플루언서/공구기간/배송시작일)는 유지 — 세트 구성만 초기화
+  document.getElementById(`planName_${key}`).value = '';
+  document.getElementById(`planQty_${key}`).value = 1;
+  document.getElementById(`discRate_${key}`).value = 28;
+  setType(key, '세트');
+  refreshEditor(key);
+  currentPlanId = null;
+  renderPlanCards(key, PLAN_CHANNELS[key]);
+}
+
+// ── 기획 저장/불러오기 ──
+async function savePlan(key, channel) {
+  const eventName = document.getElementById(`eventName_${key}`)?.value.trim() || '';
+  const eventDateStart = document.getElementById(`eventDateStart_${key}`)?.value || '';
+  const eventDateEnd = document.getElementById(`eventDateEnd_${key}`)?.value || '';
+  const eventDate = eventDateStart && eventDateEnd ? eventDateStart + ' ~ ' + eventDateEnd : eventDateStart || eventDateEnd;
+  const shipDate = document.getElementById(`shipDate_${key}`)?.value || '';
+  const name = document.getElementById(`planName_${key}`).value.trim();
+  if(!name) { alert('기획명을 입력하세요.'); return; }
+  const ed = getEditor(key);
+  if(ed.items.length === 0) { alert('제품을 추가하세요.'); return; }
+  const disc = parseInt(document.getElementById(`discRate_${key}`).value) || 0;
+  const planQty = parseInt(document.getElementById(`planQty_${key}`).value) || 1;
+  const total = ed.items.reduce((s,i) => s+i.price*i.qty, 0);
+
+  const obj = {
+    id: currentPlanId || genId(),
+    name, eventName, eventDate, eventDateStart, eventDateEnd, shipDate, channel,
+    type: ed.type,
+    items: [...ed.items],
+    discount: disc,
+    planQty,
+    retail: total,
+    sale: Math.round(total*(1-disc/100)),
+    closed: false,
+    createdAt: today()
+  };
+
+  const idx = plans.findIndex(p => p.id === obj.id);
+  if(idx >= 0) { obj.closed = plans[idx].closed; plans[idx] = obj; }
+  else { plans.push(obj); }
+  currentPlanId = obj.id;
+  await savePlans();
+  renderPlanCards(key, channel);
+  renderIntegrated();
+  alert(`"${name}" 저장 완료!`);
+}
+
+function newPlan(channel) {
+  const key = channel === '공구채널' ? 'gongu' : 'live';
+  currentPlanId = null;
+  clearEditor(key);
+}
+
+function loadPlan(key, id) {
+  const p = plans.find(x => x.id === id);
+  if(!p) return;
+  currentPlanId = p.id;
+  editors[key] = { items: [...p.items], type: p.type };
+  // 공구건 정보 복원
+  if(document.getElementById(`eventName_${key}`)) document.getElementById(`eventName_${key}`).value = p.eventName || '';
+  if(document.getElementById(`eventDateStart_${key}`)) document.getElementById(`eventDateStart_${key}`).value = p.eventDateStart || '';
+  if(document.getElementById(`eventDateEnd_${key}`)) document.getElementById(`eventDateEnd_${key}`).value = p.eventDateEnd || '';
+  if(document.getElementById(`shipDate_${key}`)) document.getElementById(`shipDate_${key}`).value = p.shipDate || '';
+  document.getElementById(`planName_${key}`).value = p.name;
+  document.getElementById(`planQty_${key}`).value = p.planQty || 1;
+  document.getElementById(`discRate_${key}`).value = p.discount;
+  setType(key, p.type);
+  refreshEditor(key);
+  renderPlanCards(key, p.channel);
+}
+
+function renderPlanCards(key, channel) {
+  const el = document.getElementById(`planCards_${key}`);
+  if(!el) return;
+  const chanPlans = plans.filter(p => p.channel === channel);
+  if(chanPlans.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--gray3);padding:16px;text-align:center;">저장된 기획 없음</div>';
+    return;
   }
-})();
+  el.innerHTML = '';
+
+  // 공구건별 그룹
+  const groups = {};
+  chanPlans.forEach(p => {
+    const ev = p.eventName || '(공구건 미지정)';
+    if(!groups[ev]) groups[ev] = [];
+    groups[ev].push(p);
+  });
+
+  Object.entries(groups).forEach(([evName, evPlans]) => {
+    // 공구건 헤더
+    const header = document.createElement('div');
+    header.style.cssText = 'background:var(--black);color:white;padding:7px 12px;font-size:10px;font-weight:700;letter-spacing:1.5px;';
+    header.textContent = evName;
+    el.appendChild(header);
+
+    evPlans.forEach(p => {
+      const div = document.createElement('div');
+      div.style.cssText = `padding:10px 12px;border-left:3px solid ${p.id===currentPlanId?'var(--red)':'var(--gray4)'};border-bottom:1px solid var(--gray5);cursor:pointer;background:${p.id===currentPlanId?'var(--red-light)':'white'};transition:all 0.1s;${p.closed?'opacity:0.4;':''}`;
+      div.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:6px;">
+          <div style="flex:1;">
+            <div style="font-size:12px;font-weight:700;">${p.name} ${p.closed?'<span style="font-size:9px;color:var(--gray3);">[종료]</span>':''}</div>
+            <div style="font-size:10px;color:var(--gray3);margin-top:2px;">${p.type} · ${p.planQty||1}개 · 할인${p.discount}%</div>
+            <div style="font-size:11px;color:var(--red);margin-top:1px;">${fmt(p.sale)}/세트</div>
+          </div>
+          <button class="btn btn-danger btn-sm" style="flex-shrink:0;" onclick="event.stopPropagation();deletePlan('${p.id}','${key}','${channel}')">삭제</button>
+        </div>
+      `;
+      div.onclick = () => loadPlan(key, p.id);
+      el.appendChild(div);
+    });
+  });
+}
+
+async function deletePlan(id, key, channel) {
+  if(!confirm('삭제할까요?')) return;
+  plans = plans.filter(p => p.id !== id);
+  if(currentPlanId === id) { currentPlanId = null; clearEditor(key); }
+  try { await sb.from('channel_plans').delete().eq('id', id); } catch(e) { console.error(e); }
+  savePlans();
+  renderPlanCards(key, channel);
+  renderIntegrated();
+}
+
+// ── 엑셀 탭 ──
+function switchExcelTab(key, tab, btn) {
+  const area = document.getElementById(`excelArea_${key}`);
+  const dlBtn = document.getElementById(`excelBtn_${key}`);
+  if(area) area.style.display = 'block';
+  if(dlBtn) {
+    const labels = { mgmt:'관리', bom:'BOM', logistics:'물류' };
+    dlBtn.textContent = `📥 ${labels[tab]} 엑셀 다운로드`;
+    dlBtn.onclick = () => downloadExcel(key, tab);
+  }
+}
+
+function downloadExcel(key, tab) {
+  const channel = PLAN_CHANNELS[key];
+  const chanPlans = plans.filter(p => p.channel === channel);
+  if(chanPlans.length === 0) { alert('저장된 기획이 없습니다.'); return; }
+
+  loadXLSX(() => {
+    if(tab === 'mgmt') exportMgmt(chanPlans, channel);
+    else if(tab === 'bom') exportBOM(chanPlans, channel);
+    else exportLogistics(chanPlans, channel);
+  });
+}
+
+function loadXLSX(cb) {
+  if(typeof XLSX !== 'undefined') { cb(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  s.onload = cb;
+  document.head.appendChild(s);
+}
+
+// 관리 엑셀
+function exportMgmt(chanPlans, channel) {
+  const wb = XLSX.utils.book_new();
+  const rows = [['NO','기획명','채널','유형','상품명','관리코드','단가','세트당수량','기획수량','필요수량','증정여부','할인율','기획가(1세트)']];
+  chanPlans.forEach((p, pi) => {
+    const sq = p.planQty || 1;
+    p.items.forEach((item, ii) => {
+      rows.push([
+        ii===0 ? pi+1 : '',
+        ii===0 ? p.name : '',
+        ii===0 ? channel : '',
+        ii===0 ? p.type : '',
+        item.name, item.code, item.price,
+        item.qty, sq, item.qty * sq,
+        item.gift ? '증정' : '',
+        ii===0 ? p.discount+'%' : '',
+        ii===0 ? p.sale : ''
+      ]);
+    });
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [5,14,10,8,22,12,10,8,8,8,8,8,12].map(w=>{return{wch:w}});
+  XLSX.utils.book_append_sheet(wb, ws, '관리');
+  XLSX.writeFile(wb, `유스트_${channel}_관리_${today()}.xlsx`);
+}
+
+// BOM 엑셀
+function exportBOM(chanPlans, channel) {
+  const wb = XLSX.utils.book_new();
+  const rows = [['BOM코드','기획명','채널','구성품코드','구성품명','단가','수량','증정']];
+  chanPlans.forEach((p, pi) => {
+    const bomCode = getBomCode(channel, pi);
+    p.items.forEach(item => {
+      rows.push([bomCode, p.name, channel, item.code, item.name, item.price, item.qty, item.gift?'Y':'']);
+    });
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [14,16,10,12,22,10,6,6].map(w=>{return{wch:w}});
+  XLSX.utils.book_append_sheet(wb, ws, 'BOM');
+  XLSX.writeFile(wb, `유스트_${channel}_BOM_${today()}.xlsx`);
+}
+
+// 물류 엑셀 (관리코드별 합산)
+function exportLogistics(chanPlans, channel) {
+  const merged = {};
+  chanPlans.forEach(p => {
+    const sq = p.planQty || 1;
+    p.items.forEach(item => {
+      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0 };
+      merged[item.code].total += item.qty * sq;
+    });
+  });
+  const wb = XLSX.utils.book_new();
+  const rows = [['관리코드','제품명','총 필요수량']];
+  Object.entries(merged).sort((a,b) => a[0].localeCompare(b[0])).forEach(([code,d]) => {
+    rows.push([code, d.name, d.total]);
+  });
+  rows.push(['','합계', Object.values(merged).reduce((s,d)=>s+d.total,0)]);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:12},{wch:24},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, '물류');
+  XLSX.writeFile(wb, `유스트_${channel}_물류_${today()}.xlsx`);
+}
+
+// ══════════════ 통합 기획 ══════════════
+function renderIntegrated() {
+  const chanFilter = document.getElementById('intChanFilter')?.value || '';
+  const allFiltered = plans.filter(p => !chanFilter || p.channel === chanFilter);
+
+  // ── 상단: 진행중 합산 표 ──
+  const active = allFiltered.filter(p => !p.closed);
+  const merged = {};
+  active.forEach(p => {
+    const sq = p.planQty || 1;
+    p.items.forEach(item => {
+      if(item.gift) return;
+      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0 };
+      merged[item.code].total += item.qty * sq;
+    });
+  });
+
+  // 카테고리 찾기
+  Object.keys(merged).forEach(code => {
+    const prod = DB.find(p => p[0] === code);
+    merged[code].cat = prod ? prod[2] : '기타';
+  });
+  const CAT_ORDER_TOP = ["바스","바디케어","에센셜 오일","허브 크림","페이스","헤어","홈&리빙","기타"];
+  const sortedItems = Object.entries(merged).sort((a,b) => {
+    const ai = CAT_ORDER_TOP.indexOf(a[1].cat);
+    const bi = CAT_ORDER_TOP.indexOf(b[1].cat);
+    if(ai !== bi) return (ai===-1?99:ai) - (bi===-1?99:bi);
+    return a[1].name.localeCompare(b[1].name,'ko');
+  });
+  const tbody = document.getElementById('mergedTbody');
+  tbody.innerHTML = '';
+
+  if(sortedItems.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="14" style="padding:16px;text-align:center;color:#888;">진행중인 기획이 없습니다</td></tr>';
+  } else {
+    const COLS = 7; // 한 행에 7쌍
+    for(let r = 0; r < Math.ceil(sortedItems.length / COLS); r++) {
+      const tr = document.createElement('tr');
+      tr.style.background = r % 2 === 0 ? 'white' : '#f0f8ff';
+      let html = '';
+      for(let c = 0; c < COLS; c++) {
+        const idx = r * COLS + c;
+        if(idx < sortedItems.length) {
+          const [code, d] = sortedItems[idx];
+          html += `<td style="padding:5px 8px;border:1px solid #b3d9f5;font-size:12px;">${d.name}</td>`;
+          html += `<td style="padding:5px 8px;border:1px solid #b3d9f5;text-align:center;font-weight:900;font-size:13px;color:#1a5276;">${d.total}</td>`;
+        } else {
+          html += '<td style="border:1px solid #b3d9f5;"></td><td style="border:1px solid #b3d9f5;"></td>';
+        }
+      }
+      tr.innerHTML = html;
+      tbody.appendChild(tr);
+    }
+  }
+
+  // ── 하단: 공구건 단위 리스트 ──
+  // 공구건별 그룹핑 (eventName + channel 기준)
+  const eventGroups = {};
+  allFiltered.forEach(p => {
+    const key = (p.eventName||'미지정') + '||' + p.channel;
+    if(!eventGroups[key]) {
+      eventGroups[key] = {
+        eventName: p.eventName || '미지정',
+        channel: p.channel,
+        eventDateStart: p.eventDateStart || '',
+        eventDateEnd: p.eventDateEnd || '',
+        shipDate: p.shipDate || '',
+        plans: [],
+        closed: true
+      };
+    }
+    eventGroups[key].plans.push(p);
+    if(!p.closed) eventGroups[key].closed = false;
+  });
+
+  const listWrap = document.getElementById('intListWrap');
+  listWrap.innerHTML = '';
+
+  if(Object.keys(eventGroups).length === 0) {
+    listWrap.innerHTML = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--gray3);">기획이 없습니다</td></tr>';
+    return;
+  }
+
+  Object.entries(eventGroups).forEach(([gkey, g]) => {
+    const isClosed = g.closed;
+    const period = g.eventDateStart ? `${g.eventDateStart}${g.eventDateEnd ? ' ~ '+g.eventDateEnd : ''}` : '—';
+    const tr = document.createElement('tr');
+    tr.style.cssText = `border-bottom:1px solid var(--gray5);cursor:pointer;${isClosed ? 'opacity:0.5;' : ''}`;
+    tr.style.background = isClosed ? 'var(--gray6)' : 'white';
+    tr.innerHTML = `
+      <td style="padding:11px 14px;font-weight:700;font-size:13px;border-left:4px solid ${isClosed ? 'var(--gray4)' : 'var(--red)'};">${g.eventName}</td>
+      <td style="padding:11px 14px;font-size:12px;color:var(--gray2);">${g.channel}</td>
+      <td style="padding:11px 14px;font-size:12px;">${period}</td>
+      <td style="padding:11px 14px;font-size:12px;">${g.shipDate || '—'}</td>
+      <td style="padding:11px 14px;text-align:center;font-size:12px;">${g.plans.length}개</td>
+      <td style="padding:11px 14px;text-align:center;">
+        <span style="background:${isClosed ? 'var(--gray5)' : '#fff3e0'};color:${isClosed ? 'var(--gray3)' : '#e65100'};font-size:10px;font-weight:700;padding:3px 10px;">
+          ${isClosed ? '완료' : '진행중'}
+        </span>
+      </td>
+      <td style="padding:11px 14px;text-align:center;">
+        <button class="btn btn-sm ${isClosed ? 'btn-ghost' : 'btn-danger'}" onclick="event.stopPropagation();toggleEventClosed('${gkey}')">
+          ${isClosed ? '▶ 재개' : '■ 완료'}
+        </button>
+      </td>
+      <td style="padding:11px 14px;text-align:center;">
+        <button class="btn btn-sm" style="background:#fdecea;color:var(--red);border:1px solid var(--red);" onclick="event.stopPropagation();deleteEventGroup('${gkey}')">삭제</button>
+      </td>
+    `;
+    tr.ondblclick = () => showEventDetail(gkey, g);
+    tr.title = '더블클릭하면 상세 보기';
+    listWrap.appendChild(tr);
+  });
+}
+
+async function deleteEventGroup(gkey) {
+  const [evName, channel] = gkey.split('||');
+  if(!confirm(`"${evName}" 공구건의 모든 기획을 삭제할까요?`)) return;
+  const toDelete = plans.filter(p => (p.eventName||'미지정') === evName && p.channel === channel);
+  plans = plans.filter(p => !((p.eventName||'미지정') === evName && p.channel === channel));
+  for (const p of toDelete) {
+    try { await sb.from('channel_plans').delete().eq('id', p.id); } catch(e) { console.error(e); }
+  }
+  savePlans();
+  renderIntegrated();
+  ['gongu','live'].forEach(k => renderPlanCards(k, PLAN_CHANNELS[k]));
+}
+
+async function toggleEventClosed(gkey) {
+  const [evName, channel] = gkey.split('||');
+  const evPlans = plans.filter(p => (p.eventName||'미지정') === evName && p.channel === channel);
+  const allClosed = evPlans.every(p => p.closed);
+  evPlans.forEach(p => p.closed = !allClosed);
+  await savePlans();
+  renderIntegrated();
+  ['gongu','live'].forEach(k => renderPlanCards(k, PLAN_CHANNELS[k]));
+}
+
+function showEventDetail(gkey, g) {
+  const modal = document.getElementById('detailModal');
+  const content = document.getElementById('detailContent');
+  modal.style.display = 'flex';
+
+  const merged = {};
+  g.plans.forEach(p => {
+    const sq = p.planQty || 1;
+    p.items.forEach(item => {
+      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0, giftTotal: 0 };
+      if(item.gift) merged[item.code].giftTotal += item.qty * sq;
+      else merged[item.code].total += item.qty * sq;
+    });
+  });
+
+  const period = g.eventDateStart ? `${g.eventDateStart}${g.eventDateEnd ? ' ~ '+g.eventDateEnd : ''}` : '—';
+  // 카테고리 찾기
+  Object.keys(merged).forEach(code => {
+    const prod = DB.find(p => p[0] === code);
+    merged[code].cat = prod ? prod[2] : '기타';
+  });
+  const CAT_ORDER_INT = ["바스","바디케어","에센셜 오일","허브 크림","페이스","헤어","홈&리빙","기타"];
+  const sortedMerged = Object.entries(merged).sort((a,b) => {
+    const ai = CAT_ORDER_INT.indexOf(a[1].cat);
+    const bi = CAT_ORDER_INT.indexOf(b[1].cat);
+    if(ai !== bi) return (ai===-1?99:ai) - (bi===-1?99:bi);
+    return a[1].name.localeCompare(b[1].name,'ko');
+  });
+  window.sortedMergedData = sortedMerged; // 엑셀 다운용 전역 저장
+
+  let html = `
+    <!-- 헤더 -->
+    <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid var(--black);">
+      <div style="font-size:20px;font-weight:900;margin-bottom:4px;">${g.eventName}</div>
+      <div style="font-size:12px;color:var(--gray3);">${g.channel} · 공구기간 ${period} · 배송 ${g.shipDate||'—'}</div>
+    </div>
+
+    <!-- 1. 상품별 총 필요수량 (상단) -->
+    <div style="margin-bottom:20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;background:#e8f4fd;padding:7px 10px;margin-bottom:0;">
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;color:#1a5276;">▶ 상품별 총 필요수량</span>
+        <button class="btn btn-sm" style="background:#2980b9;color:white;font-size:10px;" onclick="downloadLogisticsFromDetail(sortedMergedData, '${g.eventName}')">📥 물류 엑셀</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="background:#2980b9;color:white;">
+            <th style="padding:7px 12px;text-align:left;font-weight:700;width:110px;">관리코드</th>
+            <th style="padding:7px 12px;text-align:left;font-weight:700;">상품명</th>
+            <th style="padding:7px 12px;text-align:center;font-weight:700;width:100px;">기획수량</th>
+            <th style="padding:7px 12px;text-align:center;font-weight:700;width:100px;">증정수량</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(() => {
+            let lastCat = null; let rows = '';
+            sortedMerged.forEach(([code,d],i) => {
+              if(d.cat !== lastCat) {
+                lastCat = d.cat;
+                rows += `<tr style="background:#2980b9;"><td colspan="4" style="padding:5px 12px;font-size:10px;font-weight:700;color:white;letter-spacing:1.5px;">${d.cat.toUpperCase()}</td></tr>`;
+              }
+              rows += `<tr style="background:${i%2===0?'white':'#f0f8ff'};border-bottom:1px solid #b3d9f5;">
+                <td style="padding:6px 12px;font-size:11px;color:#888;">${code}</td>
+                <td style="padding:6px 12px;">${d.name}</td>
+                <td style="padding:6px 12px;text-align:center;font-weight:700;color:#1a5276;font-size:14px;">${d.total||'—'}</td>
+                <td style="padding:6px 12px;text-align:center;color:#27ae60;font-weight:700;">${d.giftTotal||'—'}</td>
+              </tr>`;
+            });
+            return rows;
+          })()}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 2. 세트 기획 목록 (하단) -->
+    <div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1px;color:var(--gray2);background:var(--gray6);padding:7px 10px;margin-bottom:0;">▶ 세트 기획 목록</div>
+      ${g.plans.map(p => `
+        <div style="margin-bottom:10px;border:1px solid var(--gray5);">
+          <div style="background:var(--black);color:white;padding:7px 12px;display:flex;align-items:center;gap:10px;">
+            <span style="font-weight:700;font-size:13px;">${p.name}</span>
+            <span style="font-size:11px;color:rgba(255,255,255,0.5);">${p.type} · ${p.planQty||1}개 · 할인 ${p.discount}%</span>
+            <span style="font-size:11px;color:#FFDDE1;margin-left:auto;">기획가 ${fmt(p.sale)}/세트 &nbsp;·&nbsp; 기대매출 <strong style="font-size:13px;">${fmt(p.sale * (p.planQty||1))}</strong></span>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="background:var(--gray6);">
+                <th style="padding:6px 10px;text-align:left;font-size:10px;font-weight:700;color:var(--gray2);">상품명</th>
+                <th style="padding:6px 10px;text-align:right;font-size:10px;font-weight:700;color:var(--gray2);width:80px;">단가</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--gray2);width:70px;">세트당</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--gray2);width:70px;">필요수량</th>
+                <th style="padding:6px 10px;text-align:center;font-size:10px;font-weight:700;color:var(--gray2);width:60px;">증정</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${p.items.map((item,i)=>`
+                <tr style="background:${i%2===0?'white':'var(--gray6)'};border-bottom:1px solid var(--gray5);">
+                  <td style="padding:6px 10px;">${item.name}</td>
+                  <td style="padding:6px 10px;text-align:right;color:var(--red);">${fmt(item.price)}</td>
+                  <td style="padding:6px 10px;text-align:center;">×${item.qty}</td>
+                  <td style="padding:6px 10px;text-align:center;font-weight:700;color:#1a5276;">${item.qty*(p.planQty||1)}</td>
+                  <td style="padding:6px 10px;text-align:center;">${item.gift?'<span style="color:#27ae60;font-weight:700;">✓</span>':''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `).join('')}
+
+      <!-- 총 기대매출 -->
+      <div style="background:var(--red);color:white;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+        <span style="font-size:11px;font-weight:700;letter-spacing:1px;">총 기대매출 (${g.plans.length}개 세트 합산)</span>
+        <span style="font-size:20px;font-weight:900;">${fmt(g.plans.reduce((s,p) => s + p.sale * (p.planQty||1), 0))}</span>
+      </div>
+    </div>
+  `;
+  content.innerHTML = html;
+}
+
+function downloadLogisticsFromDetail(data, eventName) {
+  if(!data || data.length === 0) { alert('데이터가 없습니다.'); return; }
+  loadXLSX(() => {
+    const wb = XLSX.utils.book_new();
+    const rows = [['관리코드','상품명','카테고리','기획수량','증정수량']];
+    data.forEach(([code, d]) => {
+      rows.push([code, d.name, d.cat, d.total||0, d.giftTotal||0]);
+    });
+    rows.push(['','','합계', data.reduce((s,[,d])=>s+(d.total||0),0), data.reduce((s,[,d])=>s+(d.giftTotal||0),0)]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:10},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, ws, '물류취합');
+    XLSX.writeFile(wb, `유스트_${eventName}_물류_${today()}.xlsx`);
+  });
+}
+
+function closeDetail() {
+  document.getElementById('detailModal').style.display = 'none';
+}
+
+// ══════════════ 네비 ══════════════
+function goPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(`page-${name}`).classList.add('active');
+  event.currentTarget.classList.add('active');
+
+  const titles = { db:'제품 DB', expiry:'유통기한 DB', 'plan-gongu':'기획 · 공구채널', 'plan-live':'기획 · 라이브채널', integrated:'통합 기획' };
+  document.getElementById('topbarTitle').textContent = titles[name] || name;
+
+  if(name === 'expiry') renderExpiry();
+  if(name === 'plan-gongu') renderPlanPage('공구채널');
+  if(name === 'integrated') renderIntegrated();
+}
+
+// ══════════════ 인증 ══════════════
+async function doLogin() {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw = document.getElementById('auth-pw').value;
+  const errEl = document.getElementById('auth-error');
+  errEl.textContent = '';
+  if (!email || !pw) { errEl.textContent = '이메일과 비밀번호를 입력하세요'; return; }
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if (error) { errEl.textContent = error.message; return; }
+  document.getElementById('auth-overlay').style.display = 'none';
+  document.getElementById('app-wrap').style.display = 'flex';
+  await loadAllFromSupabase();
+  initDB();
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// ══════════════ Supabase 데이터 로드 ══════════════
+async function loadAllFromSupabase() {
+  // 1. products → DB 배열
+  const { data: prods, error: pe } = await sb.from('products').select('id,name_ko,category,base_price,is_active');
+  if (pe) console.error('products load error:', pe);
+  if (prods && prods.length > 0) {
+    DB = prods.map(p => [
+      p.id,
+      p.name_ko || '',
+      p.category || '',
+      '',  // ABC 등급 (Supabase에 없으면 빈값)
+      Math.round(Number(p.base_price) || 0),
+      p.is_active ? '활성' : '품절'
+    ]);
+  }
+
+  // 2. stock → EXPIRY, EXPIRY_DB
+  const { data: stocks, error: se } = await sb.from('stock').select('product_id,expiry,loc1,loc2,total');
+  if (se) console.error('stock load error:', se);
+  if (stocks && stocks.length > 0) {
+    // EXPIRY: 제품별 가장 가까운 유통기한
+    const expMap = {};
+    stocks.forEach(s => {
+      if (!s.expiry) return;
+      // expiry가 "27/05" 형식이면 "2027-05-01"로 변환
+      let expDate = s.expiry;
+      if (/^\d{2}\/\d{2}$/.test(expDate)) {
+        const [yy, mm] = expDate.split('/');
+        expDate = `20${yy}-${mm}-01`;
+      }
+      if (!expMap[s.product_id] || expDate < expMap[s.product_id]) {
+        expMap[s.product_id] = expDate;
+      }
+    });
+    EXPIRY = expMap;
+
+    // EXPIRY_DB: 제품별·유통기한별 합산 [code, name, expDate, total]
+    const grouped = {};
+    stocks.forEach(s => {
+      let expDate = s.expiry || '비관리';
+      if (/^\d{2}\/\d{2}$/.test(expDate)) {
+        const [yy, mm] = expDate.split('/');
+        expDate = `20${yy}-${mm}-01`;
+      }
+      const key = s.product_id + '||' + expDate;
+      if (!grouped[key]) {
+        const prod = DB.find(p => p[0] === s.product_id);
+        grouped[key] = { code: s.product_id, name: prod ? prod[1] : s.product_id, exp: expDate, total: 0 };
+      }
+      grouped[key].total += (s.total || 0);
+    });
+    EXPIRY_DB = Object.values(grouped).map(g => [g.code, g.name, g.exp, g.total]);
+  }
+
+  // 3. CATS 재생성
+  CATS = [...new Set(DB.map(p => p[2]))].filter(c => c && !SKIP_CATS.has(c)).sort();
+
+  // 4. channel_plans → plans
+  await loadPlans();
+}
+
+// ══════════════ 초기화 ══════════════
+window.addEventListener('DOMContentLoaded', async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    document.getElementById('auth-overlay').style.display = 'none';
+    document.getElementById('app-wrap').style.display = 'flex';
+    await loadAllFromSupabase();
+    initDB();
+  }
+  // 세션 없으면 로그인 오버레이가 표시된 상태로 대기
+});
