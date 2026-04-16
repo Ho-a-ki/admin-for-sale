@@ -810,6 +810,7 @@ let plans = [];  // { id, name, channel, type(세트/단품), items:[{code,name,
 let currentPlanId = null;
 let currentChannel = null;
 let planEditMode = false; // 편집중인 기획 id
+let currentEventKey = null; // 선택된 공구건 키 ('__new__' = 새 공구건 작성중)
 
 // Supabase CRUD (channel_plans)
 async function savePlans() {
@@ -867,6 +868,12 @@ async function loadPlans() {
 function fmt(n) { return n > 0 ? n.toLocaleString() + '원' : '—'; }
 function today() { return new Date().toLocaleDateString('ko-KR'); }
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function eventKeyOf(p) { return [p.eventName||'', p.eventDateStart||'', p.eventDateEnd||'', p.shipDate||''].join('|'); }
+function fmtShortDate(d) {
+  if(!d) return '—';
+  const parts = String(d).split('-');
+  return parts.length === 3 ? `${parts[1]}.${parts[2]}` : d;
+}
 function getBomCode(channel, idx) {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(2);
@@ -1003,115 +1010,287 @@ function filterDB() {
 function renderPlanPage(channel) {
   const key = channel === '공구채널' ? 'gongu' : 'live';
   const wrap = document.getElementById(`planContent-${key}`);
-  const eventLabel = channel === '공구채널' ? '공구건명' : '라이브건명';
+  const eventLabel = channel === '공구채널' ? '공구건' : '라이브건';
   const dateLabel = channel === '공구채널' ? '공구기간' : '라이브일자';
 
   wrap.innerHTML = `
-    <!-- ── 상단: 공구건 정보 ── -->
-    <div class="card" style="margin-bottom:14px;">
-      <div class="card-header flex-between">
-        <span class="card-title">${eventLabel} 정보</span>
-        <div class="flex" style="gap:8px;">
-          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','mgmt',this);document.getElementById('excelArea_${key}').style.display='block'">관리</button>
-          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','bom',this);document.getElementById('excelArea_${key}').style.display='block'">BOM</button>
-          <button class="btn btn-outline btn-sm" onclick="switchExcelTab('${key}','logistics',this);document.getElementById('excelArea_${key}').style.display='block'">물류</button>
-        </div>
-      </div>
-      <div style="padding:14px;display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap;">
+  <div class="pg-paper">
+
+    <!-- ── 공구건 리스트 (최상단) ── -->
+    <section class="pg-events">
+      <div class="pg-events__head">
         <div>
-          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">인플루언서</div>
-          <input type="text" class="inp-box" id="eventName_${key}" placeholder="예) 두열무네" style="width:180px;font-size:14px;font-weight:700;">
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">공구기간</div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <input type="date" class="inp-box" id="eventDateStart_${key}" style="width:140px;">
-            <span style="color:var(--gray3);font-weight:700;">~</span>
-            <input type="date" class="inp-box" id="eventDateEnd_${key}" style="width:140px;">
+          <div class="pg-events__eyebrow">${channel} / ${eventLabel} LIST</div>
+          <div class="pg-events__title-row">
+            <h1 class="pg-events__title">${eventLabel}</h1>
+            <span class="pg-events__count" id="eventsCount_${key}">0건</span>
           </div>
         </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;color:var(--gray3);letter-spacing:1px;margin-bottom:4px;">배송시작일</div>
-          <input type="date" class="inp-box" id="shipDate_${key}" style="width:140px;">
-        </div>
-        <div id="excelArea_${key}" style="display:none;">
-          <button class="btn btn-red btn-sm" onclick="downloadExcel('${key}','mgmt')" id="excelBtn_${key}">📥 엑셀 다운로드</button>
-        </div>
+        <button class="pg-events__new" onclick="newEvent('${channel}')">+ 새 ${eventLabel}</button>
       </div>
+      <div class="pg-events__grid" id="eventsGrid_${key}"></div>
+    </section>
+
+    <!-- ── 선택 안됐을 때 ── -->
+    <div class="pg-empty-select" id="emptySelect_${key}">
+      <div class="pg-empty-select__icon">◎</div>
+      <div class="pg-empty-select__title">${eventLabel}을 선택하거나 새로 만드세요</div>
+      <div class="pg-empty-select__hint">상단에서 ${eventLabel}을 클릭하면 제품 기획을 추가·편집할 수 있습니다.</div>
     </div>
 
-    <!-- ── 하단: 3열 레이아웃 ── -->
-    <div style="display:grid;grid-template-columns:360px 1fr 260px;gap:14px;min-height:600px;">
+    <!-- ── 편집 영역 (선택 시에만 노출) ── -->
+    <div class="pg-detail" id="editorWrap_${key}" style="display:none;">
+
+    <!-- ── 마스트헤드 ── -->
+    <header class="pg-masthead">
+      <div>
+        <div class="pg-masthead__eyebrow">${channel} — ${eventLabel}</div>
+        <div class="pg-masthead__fields">
+          <div class="pg-field" style="flex:1;min-width:220px;">
+            <span class="pg-field__label">인플루언서</span>
+            <input type="text" class="pg-field__input" id="eventName_${key}" placeholder="예) 두열무네">
+          </div>
+          <div class="pg-field">
+            <span class="pg-field__label">${dateLabel}</span>
+            <div class="pg-field__range">
+              <input type="date" class="pg-field__input pg-field__input--date" id="eventDateStart_${key}">
+              <span class="pg-field__range-sep">—</span>
+              <input type="date" class="pg-field__input pg-field__input--date" id="eventDateEnd_${key}">
+            </div>
+          </div>
+          <div class="pg-field">
+            <span class="pg-field__label">배송시작일</span>
+            <input type="date" class="pg-field__input pg-field__input--date" id="shipDate_${key}">
+          </div>
+        </div>
+      </div>
+      <div class="pg-masthead__actions">
+        <button class="pg-export-btn" onclick="switchExcelTab('${key}','mgmt',this);document.getElementById('excelArea_${key}').style.display='inline-flex'">관리</button>
+        <button class="pg-export-btn" onclick="switchExcelTab('${key}','bom',this);document.getElementById('excelArea_${key}').style.display='inline-flex'">BOM</button>
+        <button class="pg-export-btn" onclick="switchExcelTab('${key}','logistics',this);document.getElementById('excelArea_${key}').style.display='inline-flex'">물류</button>
+        <div id="excelArea_${key}" style="display:none;align-items:center;">
+          <button class="pg-export-download" onclick="downloadExcel('${key}','mgmt')" id="excelBtn_${key}">↓ Excel</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── 3단 그리드 ── -->
+    <div class="pg-grid">
 
       <!-- 왼쪽: 제품 검색 -->
-      <div class="card" style="display:flex;flex-direction:column;">
-        <div class="card-header"><span class="card-title">제품 검색</span></div>
-        <div style="padding:10px;flex:1;display:flex;flex-direction:column;gap:8px;">
-          <input type="text" class="inp-box" style="width:100%;" placeholder="제품명 또는 코드..." id="planSearch_${key}" oninput="filterPlanSearch('${key}')">
-          <div class="chan-btns" id="planCatBtns_${key}" style="flex-wrap:wrap;"></div>
-          <div class="prod-search-list" style="flex:1;" id="planProdList_${key}"></div>
+      <section class="pg-col pg-col--left">
+        <div class="pg-section-title">
+          <span>제품 검색</span>
         </div>
-      </div>
+        <input type="text" class="pg-search" placeholder="제품명 또는 코드…" id="planSearch_${key}" oninput="filterPlanSearch('${key}')">
+        <div class="pg-chip-row" id="planCatBtns_${key}"></div>
+        <div class="pg-prod-list" id="planProdList_${key}"></div>
+      </section>
 
-      <!-- 중앙: 세트 기획 편집 -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">세트 기획</span>
-          <div class="spacer"></div>
-          <button class="btn btn-ghost btn-sm" onclick="clearEditor('${key}')">초기화</button>
-          <button class="btn btn-black btn-sm" onclick="savePlan('${key}','${channel}')">💾 저장</button>
+      <!-- 중앙: 세트 기획 -->
+      <section class="pg-col pg-col--mid">
+        <div class="pg-section-title">
+          <span>세트 기획</span>
         </div>
-        <div style="padding:12px;">
-          <!-- 기획명 + 타입 + 수량 -->
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid var(--black);">
-            <input type="text" class="inp" id="planName_${key}" placeholder="기획명 (예: 빅스파세트)" style="flex:1;font-size:14px;font-weight:700;">
-            <div class="type-btns">
-              <button class="type-btn active" id="typeSet_${key}" onclick="setType('${key}','세트')">세트</button>
-              <button class="type-btn" id="typeSingle_${key}" onclick="setType('${key}','단품')">단품</button>
-            </div>
-            <div class="flex" style="gap:5px;">
-              <span style="font-size:11px;color:var(--gray2);white-space:nowrap;">기획수량</span>
-              <input type="number" class="inp-box" id="planQty_${key}" value="1" min="1" style="width:64px;font-size:14px;font-weight:700;text-align:center;" oninput="refreshEditor('${key}')">
-              <span style="font-size:11px;color:var(--gray2);">개</span>
-            </div>
+
+        <div class="pg-editor__bar">
+          <input type="text" class="pg-planname-input" id="planName_${key}" placeholder="기획명 (예: 빅스파세트)">
+          <div class="pg-type-group">
+            <button class="pg-type-btn active" id="typeSet_${key}" onclick="setType('${key}','세트')">세트</button>
+            <button class="pg-type-btn" id="typeSingle_${key}" onclick="setType('${key}','단품')">단품</button>
           </div>
-
-          <div style="font-size:11px;color:var(--gray3);margin-bottom:8px;">← 왼쪽에서 제품 클릭하면 추가됩니다</div>
-
-          <!-- 구성 아이템 -->
-          <div style="min-height:140px;border:2px dashed var(--gray4);background:var(--gray6);padding:10px;margin-bottom:12px;" id="compList_${key}">
-            <div style="text-align:center;padding:30px 0;color:var(--gray4);font-size:11px;font-weight:700;letter-spacing:1px;" id="compHint_${key}">제품을 추가하세요</div>
-            <div id="compItems_${key}"></div>
-          </div>
-
-          <!-- 요약 -->
-          <div class="summary-box">
-            <div class="sum-row"><span class="lbl">구성</span><span class="val" id="sumComp_${key}">0종</span></div>
-            <div class="sum-row"><span class="lbl">합산 정가</span><span class="val" id="sumRetail_${key}">0원</span></div>
-            <div class="disc-row">
-              <span class="disc-lbl">할인율</span>
-              <input type="number" class="disc-inp" id="discRate_${key}" value="28" min="0" max="100" oninput="refreshSummary('${key}')">
-              <span class="disc-lbl">%</span>
-            </div>
-            <div class="sum-row total"><span class="lbl">기획가 (1세트)</span><span class="val" id="sumSale_${key}">0원</span></div>
+          <div class="pg-qty-group">
+            <span class="pg-qty-label">Qty</span>
+            <input type="number" class="pg-qty-input" id="planQty_${key}" value="1" min="1" oninput="refreshEditor('${key}')">
+            <span class="pg-qty-suffix">개</span>
           </div>
         </div>
-      </div>
 
-      <!-- 오른쪽: 저장된 기획 목록 (세로) -->
-      <div class="card" style="display:flex;flex-direction:column;">
-        <div class="card-header flex-between">
-          <span class="card-title">기획 목록</span>
-          <button class="btn btn-red btn-sm" onclick="newPlan('${channel}')">+ 새 기획</button>
+        <div class="pg-editor__hint">← 왼쪽에서 제품을 클릭하면 아래에 추가됩니다.</div>
+
+        <div class="pg-comp-zone" id="compList_${key}">
+          <div class="pg-comp-hint" id="compHint_${key}">제품을 추가하세요</div>
+          <div id="compItems_${key}"></div>
         </div>
-        <div style="flex:1;overflow-y:auto;" id="planCards_${key}"></div>
-      </div>
+
+        <div class="pg-summary">
+          <div class="pg-sum-line">
+            <span class="pg-sum-line__label">구성</span>
+            <span class="pg-sum-line__value" id="sumComp_${key}">0종</span>
+          </div>
+          <div class="pg-sum-line">
+            <span class="pg-sum-line__label">합산 정가</span>
+            <span class="pg-sum-line__value" id="sumRetail_${key}">0원</span>
+          </div>
+          <div class="pg-discount-line">
+            <span class="pg-discount-line__label">할인율</span>
+            <div class="pg-discount-line__field">
+              <input type="number" class="pg-discount-input" id="discRate_${key}" value="28" min="0" max="100" oninput="refreshSummary('${key}')">
+              <span class="pg-discount-line__suffix">%</span>
+            </div>
+          </div>
+          <div class="pg-total-line">
+            <span class="pg-total-line__label">기획가 (1세트)</span>
+            <span class="pg-total-line__value" id="sumSale_${key}">0원</span>
+          </div>
+        </div>
+
+        <div class="pg-editor__actions">
+          <button class="pg-btn pg-btn--primary" onclick="savePlan('${key}','${channel}')">저장</button>
+          <button class="pg-btn pg-btn--ghost" onclick="clearEditor('${key}')">초기화</button>
+        </div>
+      </section>
+
+      <!-- 오른쪽: 저장된 기획 목록 -->
+      <section class="pg-col pg-col--right">
+        <div class="pg-plans-header">
+          <div class="pg-section-title" style="margin-bottom:0;">
+            <span>이 ${eventLabel}의 기획</span>
+          </div>
+          <button class="pg-new-btn" onclick="newPlan('${channel}')">+ 새 기획</button>
+        </div>
+        <div class="pg-plans-list" id="planCards_${key}"></div>
+      </section>
 
     </div>
+    </div><!-- /.pg-detail -->
+  </div>
   `;
 
   initPlanSearch(key);
+  renderEventList(key, channel);
   renderPlanCards(key, channel);
+  syncDetailVisibility(key);
+}
+
+// ── 공구건 리스트 렌더 ──
+function renderEventList(key, channel) {
+  const grid = document.getElementById(`eventsGrid_${key}`);
+  const countEl = document.getElementById(`eventsCount_${key}`);
+  if(!grid) return;
+  const chanPlans = plans.filter(p => p.channel === channel);
+  const events = {};
+  chanPlans.forEach(p => {
+    const ek = eventKeyOf(p);
+    if(!events[ek]) events[ek] = {
+      key: ek,
+      name: p.eventName || '(미지정)',
+      eventDateStart: p.eventDateStart,
+      eventDateEnd: p.eventDateEnd,
+      shipDate: p.shipDate,
+      plans: []
+    };
+    events[ek].plans.push(p);
+  });
+  const arr = Object.values(events).sort((a, b) => {
+    const da = a.eventDateStart || '';
+    const db = b.eventDateStart || '';
+    return db.localeCompare(da);
+  });
+  if(countEl) countEl.textContent = `${arr.length}건`;
+
+  const isNew = currentEventKey === '__new__';
+  grid.innerHTML = '';
+
+  if(arr.length === 0 && !isNew) {
+    grid.innerHTML = '<div class="pg-events__empty">등록된 공구건이 없습니다. 오른쪽 상단 <b>+ 새 공구건</b> 버튼으로 추가하세요.</div>';
+    return;
+  }
+
+  if(isNew) {
+    const newCard = document.createElement('div');
+    newCard.className = 'pg-event-card pg-event-card--new active';
+    newCard.innerHTML = `
+      <div class="pg-event-card__name">새 공구건 작성중</div>
+      <div class="pg-event-card__dates"><span class="pg-event-card__date-label">상태</span><span>입력 대기</span></div>
+      <div class="pg-event-card__meta"><span class="pg-event-card__count">아래에서 정보 입력</span></div>
+    `;
+    grid.appendChild(newCard);
+  }
+
+  arr.forEach(ev => {
+    const active = ev.key === currentEventKey;
+    const allClosed = ev.plans.length > 0 && ev.plans.every(p => p.closed);
+    const openPlans = ev.plans.filter(p => !p.closed).length;
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `pg-event-card${active ? ' active' : ''}${allClosed ? ' closed' : ''}`;
+    const dateRange = (ev.eventDateStart && ev.eventDateEnd)
+      ? `${fmtShortDate(ev.eventDateStart)} — ${fmtShortDate(ev.eventDateEnd)}`
+      : (ev.eventDateStart ? fmtShortDate(ev.eventDateStart) : '—');
+    card.innerHTML = `
+      <div class="pg-event-card__name">${ev.name}</div>
+      <div class="pg-event-card__dates">
+        <span class="pg-event-card__date-label">공구</span>
+        <span>${dateRange}</span>
+      </div>
+      <div class="pg-event-card__dates">
+        <span class="pg-event-card__date-label">배송</span>
+        <span>${ev.shipDate ? fmtShortDate(ev.shipDate) : '—'}</span>
+      </div>
+      <div class="pg-event-card__meta">
+        <span class="pg-event-card__count">${openPlans}개 기획${ev.plans.length > openPlans ? ` · ${ev.plans.length - openPlans} 종료` : ''}</span>
+        ${allClosed ? '<span class="pg-event-card__closed">종료</span>' : ''}
+      </div>
+    `;
+    card.onclick = () => selectEvent(key, channel, ev.key);
+    grid.appendChild(card);
+  });
+}
+
+function syncDetailVisibility(key) {
+  const editor = document.getElementById(`editorWrap_${key}`);
+  const empty = document.getElementById(`emptySelect_${key}`);
+  if(!editor || !empty) return;
+  if(currentEventKey) {
+    editor.style.display = '';
+    empty.style.display = 'none';
+  } else {
+    editor.style.display = 'none';
+    empty.style.display = '';
+  }
+}
+
+function selectEvent(key, channel, ek) {
+  const ev = plans.find(p => p.channel === channel && eventKeyOf(p) === ek);
+  if(!ev) return;
+  currentEventKey = ek;
+  currentPlanId = null;
+  editors[key] = { items: [], type: '세트' };
+  if(document.getElementById(`eventName_${key}`)) document.getElementById(`eventName_${key}`).value = ev.eventName || '';
+  if(document.getElementById(`eventDateStart_${key}`)) document.getElementById(`eventDateStart_${key}`).value = ev.eventDateStart || '';
+  if(document.getElementById(`eventDateEnd_${key}`)) document.getElementById(`eventDateEnd_${key}`).value = ev.eventDateEnd || '';
+  if(document.getElementById(`shipDate_${key}`)) document.getElementById(`shipDate_${key}`).value = ev.shipDate || '';
+  document.getElementById(`planName_${key}`).value = '';
+  document.getElementById(`planQty_${key}`).value = 1;
+  document.getElementById(`discRate_${key}`).value = 28;
+  setType(key, '세트');
+  refreshEditor(key);
+  syncDetailVisibility(key);
+  renderEventList(key, channel);
+  renderPlanCards(key, channel);
+  document.getElementById(`editorWrap_${key}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function newEvent(channel) {
+  const key = channel === '공구채널' ? 'gongu' : 'live';
+  currentEventKey = '__new__';
+  currentPlanId = null;
+  editors[key] = { items: [], type: '세트' };
+  if(document.getElementById(`eventName_${key}`)) document.getElementById(`eventName_${key}`).value = '';
+  if(document.getElementById(`eventDateStart_${key}`)) document.getElementById(`eventDateStart_${key}`).value = '';
+  if(document.getElementById(`eventDateEnd_${key}`)) document.getElementById(`eventDateEnd_${key}`).value = '';
+  if(document.getElementById(`shipDate_${key}`)) document.getElementById(`shipDate_${key}`).value = '';
+  document.getElementById(`planName_${key}`).value = '';
+  document.getElementById(`planQty_${key}`).value = 1;
+  document.getElementById(`discRate_${key}`).value = 28;
+  setType(key, '세트');
+  refreshEditor(key);
+  syncDetailVisibility(key);
+  renderEventList(key, channel);
+  renderPlanCards(key, channel);
+  const f = document.getElementById(`eventName_${key}`);
+  if(f) f.focus();
 }
 
 // ── 제품 검색 초기화 ──
@@ -1122,16 +1301,16 @@ function initPlanSearch(key) {
   planCatFilter[key] = 'all';
   planSearchFilter[key] = '';
   const btns = document.getElementById(`planCatBtns_${key}`);
-  btns.innerHTML = '<button class="chan-btn active" onclick="setPlanCat(\''+key+'\',\'all\',this)">전체</button>';
+  btns.innerHTML = '<button class="pg-chip active" onclick="setPlanCat(\''+key+'\',\'all\',this)">전체</button>';
   CATS.forEach(c => {
-    btns.innerHTML += `<button class="chan-btn" onclick="setPlanCat('${key}','${c}',this)">${c}</button>`;
+    btns.innerHTML += `<button class="pg-chip" onclick="setPlanCat('${key}','${c}',this)">${c}</button>`;
   });
   renderPlanSearch(key);
 }
 
 function setPlanCat(key, cat, btn) {
   planCatFilter[key] = cat;
-  document.querySelectorAll(`#planCatBtns_${key} .chan-btn`).forEach(b => b.classList.remove('active'));
+  document.querySelectorAll(`#planCatBtns_${key} .pg-chip`).forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderPlanSearch(key);
 }
@@ -1153,14 +1332,20 @@ function renderPlanSearch(key) {
     return true;
   });
   if(filtered.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray3);font-size:11px;">검색 결과 없음</div>';
+    list.innerHTML = '<div style="text-align:center;padding:32px 0;font-family:var(--pg-f-sans);color:var(--pg-ink-3);font-size:13px;">결과가 없습니다.</div>';
     return;
   }
   filtered.sort((a,b) => a[1].localeCompare(b[1], 'ko'));
   filtered.forEach(p => {
     const div = document.createElement('div');
-    div.className = 'prod-item';
-    div.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="prod-item-name">${p[1]}</span><span class="prod-item-price">${fmt(p[4])}</span></div>`;
+    div.className = 'pg-prod-item';
+    div.innerHTML = `
+      <div>
+        <div class="pg-prod-item__code">${p[0]}</div>
+        <div class="pg-prod-item__name">${p[1]}</div>
+      </div>
+      <div class="pg-prod-item__price">${fmt(p[4])}</div>
+    `;
     div.onclick = () => addToEditor(key, p);
     list.appendChild(div);
   });
@@ -1250,14 +1435,15 @@ function refreshEditor(key) {
 }
 
 function updQty(key, idx, val) { getEditor(key).items[idx].qty = parseInt(val)||1; refreshEditor(key); }
-function updGift(key, idx, val) { getEditor(key).items[idx].gift = val; }
+function updGift(key, idx, val) { getEditor(key).items[idx].gift = val; refreshSummary(key); }
 function updExp(key, idx, val) { getEditor(key).items[idx].selectedExp = val || ''; }
 function delComp(key, idx) { getEditor(key).items.splice(idx,1); refreshEditor(key); }
 
 function refreshSummary(key) {
   const ed = getEditor(key);
   const disc = parseInt(document.getElementById(`discRate_${key}`)?.value) || 0;
-  const total = ed.items.reduce((s,i) => s + i.price * i.qty, 0);
+  // 증정 제품은 합산 정가·기획가에서 제외
+  const total = ed.items.reduce((s,i) => s + (i.gift ? 0 : i.price * i.qty), 0);
   const sale = Math.round(total * (1 - disc/100));
   document.getElementById(`sumComp_${key}`).textContent = ed.items.length + '종';
   document.getElementById(`sumRetail_${key}`).textContent = fmt(total);
@@ -1285,12 +1471,30 @@ async function savePlan(key, channel) {
   const eventDate = eventDateStart && eventDateEnd ? eventDateStart + ' ~ ' + eventDateEnd : eventDateStart || eventDateEnd;
   const shipDate = document.getElementById(`shipDate_${key}`)?.value || '';
   const name = document.getElementById(`planName_${key}`).value.trim();
+  if(!eventName) { alert('인플루언서(공구건명)를 입력하세요.'); return; }
   if(!name) { alert('기획명을 입력하세요.'); return; }
   const ed = getEditor(key);
   if(ed.items.length === 0) { alert('제품을 추가하세요.'); return; }
   const disc = parseInt(document.getElementById(`discRate_${key}`).value) || 0;
   const planQty = parseInt(document.getElementById(`planQty_${key}`).value) || 1;
-  const total = ed.items.reduce((s,i) => s+i.price*i.qty, 0);
+  // 증정 제품은 합산 정가·기획가에서 제외
+  const total = ed.items.reduce((s,i) => s + (i.gift ? 0 : i.price * i.qty), 0);
+
+  const newKey = [eventName, eventDateStart, eventDateEnd, shipDate].join('|');
+  // 공구건 rename: 기존 공구건 선택 상태에서 마스트헤드 정보를 바꿨다면, 그 그룹 전체 업데이트
+  const renameSources = [];
+  if(currentEventKey && currentEventKey !== '__new__' && currentEventKey !== newKey) {
+    plans.forEach(p => {
+      if(p.channel === channel && eventKeyOf(p) === currentEventKey) {
+        p.eventName = eventName;
+        p.eventDate = eventDate;
+        p.eventDateStart = eventDateStart;
+        p.eventDateEnd = eventDateEnd;
+        p.shipDate = shipDate;
+        renameSources.push(p);
+      }
+    });
+  }
 
   const obj = {
     id: currentPlanId || genId(),
@@ -1309,11 +1513,13 @@ async function savePlan(key, channel) {
   if(idx >= 0) { obj.closed = plans[idx].closed; plans[idx] = obj; }
   else { plans.push(obj); }
   currentPlanId = obj.id;
+  currentEventKey = newKey;
   await savePlans();
+  renderEventList(key, channel);
   renderPlanCards(key, channel);
   renderIntegrated();
   alert(`"${name}" 저장 완료!`);
-  // 저장 후 에디터 자동 초기화 (confirm 없이)
+  // 저장 후 에디터만 초기화 (공구건 정보는 유지 — 이어서 기획 추가 가능)
   editors[key] = { items: [], type: '세트' };
   document.getElementById(`planName_${key}`).value = '';
   document.getElementById(`planQty_${key}`).value = 1;
@@ -1321,7 +1527,7 @@ async function savePlan(key, channel) {
   setType(key, '세트');
   refreshEditor(key);
   currentPlanId = null;
-  renderPlanCards(key, PLAN_CHANNELS[key]);
+  renderPlanCards(key, channel);
 }
 
 function newPlan(channel) {
@@ -1334,6 +1540,7 @@ function loadPlan(key, id) {
   const p = plans.find(x => x.id === id);
   if(!p) return;
   currentPlanId = p.id;
+  currentEventKey = eventKeyOf(p);
   editors[key] = { items: [...p.items], type: p.type };
   // 공구건 정보 복원
   if(document.getElementById(`eventName_${key}`)) document.getElementById(`eventName_${key}`).value = p.eventName || '';
@@ -1345,20 +1552,30 @@ function loadPlan(key, id) {
   document.getElementById(`discRate_${key}`).value = p.discount;
   setType(key, p.type);
   refreshEditor(key);
+  if(document.body.dataset.page === 'plan-gongu') syncDetailVisibility(key);
   renderPlanCards(key, p.channel);
+  if(document.body.dataset.page === 'plan-gongu') renderEventList(key, p.channel);
 }
 
 function renderPlanCards(key, channel) {
   const el = document.getElementById(`planCards_${key}`);
   if(!el) return;
-  const chanPlans = plans.filter(p => p.channel === channel && !p.closed);
+  const isPlanGongu = document.body.dataset.page === 'plan-gongu';
+  let chanPlans = plans.filter(p => p.channel === channel && !p.closed);
+  // 공구채널 페이지: 선택된 공구건의 기획만 표시
+  if(isPlanGongu) {
+    if(currentEventKey === '__new__') chanPlans = [];
+    else if(currentEventKey) chanPlans = chanPlans.filter(p => eventKeyOf(p) === currentEventKey);
+  }
   if(chanPlans.length === 0) {
-    el.innerHTML = '<div style="font-size:12px;color:var(--gray3);padding:16px;text-align:center;">저장된 기획 없음</div>';
+    el.innerHTML = isPlanGongu
+      ? '<div style="font-family:var(--pg-f-sans);color:var(--pg-ink-3);font-size:13px;padding:24px 0;text-align:center;">이 공구건에 등록된 기획이 없습니다.<br><span style="font-size:11px;">중앙에서 세트를 구성해 저장하세요.</span></div>'
+      : '<div style="font-size:12px;color:var(--gray3);padding:16px;text-align:center;">저장된 기획 없음</div>';
     return;
   }
   el.innerHTML = '';
 
-  // 공구건별 그룹
+  // 공구건별 그룹 (integrated 페이지용; plan-gongu 에선 한 공구건만이라 그룹 스킵)
   const groups = {};
   chanPlans.forEach(p => {
     const ev = p.eventName || '(공구건 미지정)';
@@ -1367,25 +1584,41 @@ function renderPlanCards(key, channel) {
   });
 
   Object.entries(groups).forEach(([evName, evPlans]) => {
-    // 공구건 헤더
-    const header = document.createElement('div');
-    header.style.cssText = 'background:var(--black);color:white;padding:7px 12px;font-size:10px;font-weight:700;letter-spacing:1.5px;';
-    header.textContent = evName;
-    el.appendChild(header);
+    if(!isPlanGongu) {
+      const header = document.createElement('div');
+      header.style.cssText = 'background:var(--black);color:white;padding:7px 12px;font-size:10px;font-weight:700;letter-spacing:1.5px;';
+      header.textContent = evName;
+      el.appendChild(header);
+    }
 
     evPlans.forEach(p => {
       const div = document.createElement('div');
-      div.style.cssText = `padding:10px 12px;border-left:3px solid ${p.id===currentPlanId?'var(--red)':'var(--gray4)'};border-bottom:1px solid var(--gray5);cursor:pointer;background:${p.id===currentPlanId?'var(--red-light)':'white'};transition:all 0.1s;${p.closed?'opacity:0.4;':''}`;
-      div.innerHTML = `
-        <div style="display:flex;align-items:flex-start;gap:6px;">
-          <div style="flex:1;">
-            <div style="font-size:12px;font-weight:700;">${p.name} ${p.closed?'<span style="font-size:9px;color:var(--gray3);">[종료]</span>':''}</div>
-            <div style="font-size:10px;color:var(--gray3);margin-top:2px;">${p.type} · ${p.planQty||1}개 · 할인${p.discount}%</div>
-            <div style="font-size:11px;color:var(--red);margin-top:1px;">${fmt(p.sale)}/세트</div>
+      if (isPlanGongu) {
+        const isActive = p.id === currentPlanId;
+        div.style.cssText = `padding:12px 0 12px ${isActive?'10px':'0'};border-bottom:1px solid var(--pg-line-soft);cursor:pointer;transition:all 0.15s;${isActive?'border-left:2px solid var(--pg-accent);background:var(--pg-accent-soft);':''}${p.closed?'opacity:0.45;':''}`;
+        div.innerHTML = `
+          <div style="display:flex;align-items:flex-start;gap:8px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-family:var(--pg-f-sans);font-size:15px;font-weight:500;color:var(--pg-ink);line-height:1.3;">${p.name}${p.closed?' <span style="font-size:9px;color:var(--pg-ink-3);font-family:var(--pg-f-mono);letter-spacing:0.15em;">[종료]</span>':''}</div>
+              <div style="font-family:var(--pg-f-mono);font-size:9px;letter-spacing:0.1em;color:var(--pg-ink-3);margin-top:4px;text-transform:uppercase;">${p.type} · ${p.planQty||1}개 · −${p.discount}%</div>
+              <div style="font-family:var(--pg-f-sans);font-size:13px;color:var(--pg-accent);margin-top:6px;font-variant-numeric:tabular-nums;">${fmt(p.sale)}<span style="font-size:10px;color:var(--pg-ink-3);"> / 세트</span></div>
+            </div>
+            <button style="flex-shrink:0;background:none;border:none;color:var(--pg-ink-3);font-family:var(--pg-f-mono);font-size:9px;letter-spacing:0.15em;text-transform:uppercase;cursor:pointer;padding:2px 4px;" onclick="event.stopPropagation();deletePlan('${p.id}','${key}','${channel}')" onmouseover="this.style.color='var(--pg-accent)'" onmouseout="this.style.color='var(--pg-ink-3)'">del</button>
           </div>
-          <button class="btn btn-danger btn-sm" style="flex-shrink:0;" onclick="event.stopPropagation();deletePlan('${p.id}','${key}','${channel}')">삭제</button>
-        </div>
-      `;
+        `;
+      } else {
+        div.style.cssText = `padding:10px 12px;border-left:3px solid ${p.id===currentPlanId?'var(--red)':'var(--gray4)'};border-bottom:1px solid var(--gray5);cursor:pointer;background:${p.id===currentPlanId?'var(--red-light)':'white'};transition:all 0.1s;${p.closed?'opacity:0.4;':''}`;
+        div.innerHTML = `
+          <div style="display:flex;align-items:flex-start;gap:6px;">
+            <div style="flex:1;">
+              <div style="font-size:12px;font-weight:700;">${p.name} ${p.closed?'<span style="font-size:9px;color:var(--gray3);">[종료]</span>':''}</div>
+              <div style="font-size:10px;color:var(--gray3);margin-top:2px;">${p.type} · ${p.planQty||1}개 · 할인${p.discount}%</div>
+              <div style="font-size:11px;color:var(--red);margin-top:1px;">${fmt(p.sale)}/세트</div>
+            </div>
+            <button class="btn btn-danger btn-sm" style="flex-shrink:0;" onclick="event.stopPropagation();deletePlan('${p.id}','${key}','${channel}')">삭제</button>
+          </div>
+        `;
+      }
       div.onclick = () => loadPlan(key, p.id);
       el.appendChild(div);
     });
@@ -1398,6 +1631,7 @@ async function deletePlan(id, key, channel) {
   if(currentPlanId === id) { currentPlanId = null; clearEditor(key); }
   try { await sb.from('channel_plans').delete().eq('id', id); } catch(e) { console.error(e); }
   savePlans();
+  if(document.body.dataset.page === 'plan-gongu') renderEventList(key, channel);
   renderPlanCards(key, channel);
   renderIntegrated();
 }
