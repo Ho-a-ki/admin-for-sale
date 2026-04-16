@@ -178,7 +178,7 @@ body { font-family: "Noto Sans KR", sans-serif; background: var(--gray6); color:
 .comp-code { font-size: 10px; color: var(--gray3); }
 .comp-name { font-size: 12px; font-weight: 600; }
 .comp-price { font-size: 11px; color: var(--red); }
-.comp-qty { width: 44px; padding: 4px; border: none; border-bottom: 2px solid var(--gray4); text-align: center; font-size: 12px; font-weight: 700; background: transparent; }
+.comp-qty { width: 60px; padding: 6px; border: 1px solid var(--gray4); border-radius: 4px; text-align: center; font-size: 14px; font-weight: 700; background: white; }
 .comp-qty:focus { outline: none; border-bottom-color: var(--red); }
 .comp-gift { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--gray3); white-space: nowrap; }
 .comp-del { width: 20px; height: 20px; border: 1px solid var(--red); background: transparent; color: var(--red); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: all 0.1s; flex-shrink: 0; }

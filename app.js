@@ -851,7 +851,7 @@ async function loadPlans() {
         shipDate: r.ship_date || '',
         channel: r.channel || '',
         type: r.type || '세트',
-        items: (r.items || []).map(i => ({ code: i.code, name: i.name, price: Number(i.price)||0, qty: Number(i.qty)||1, gift: !!i.gift })),
+        items: (r.items || []).map(i => ({ code: i.code, name: i.name, price: Number(i.price)||0, qty: Number(i.qty)||1, gift: !!i.gift, selectedExp: i.selectedExp||'' })),
         discount: Number(r.discount) || 0,
         planQty: Number(r.plan_qty) || 1,
         retail: Number(r.retail) || 0,
@@ -1164,8 +1164,13 @@ function addToEditor(key, p) {
   const ed = getEditor(key);
   const existing = ed.items.find(i => i.code === p[0]);
   if(existing) { existing.qty++; }
-  else { ed.items.push({ code: p[0], name: p[1], price: p[4], qty: 1, gift: false }); }
+  else { ed.items.push({ code: p[0], name: p[1], price: p[4], qty: 1, gift: false, selectedExp: '' }); }
   refreshEditor(key);
+}
+
+function getStockByExpiry(code) {
+  return EXPIRY_DB.filter(e => e[0] === code && e[3] > 0)
+    .sort((a, b) => (a[2] || '').localeCompare(b[2] || ''));
 }
 
 function refreshEditor(key) {
@@ -1177,6 +1182,18 @@ function refreshEditor(key) {
   const planQty = parseInt(document.getElementById(`planQty_${key}`)?.value) || 1;
   ed.items.forEach((item, idx) => {
     const needed = item.qty * planQty;
+    const stocks = getStockByExpiry(item.code);
+    const totalStock = stocks.reduce((s, e) => s + e[3], 0);
+    const isShort = totalStock < needed;
+
+    // 유통기한 select 옵션
+    let expOptions = '<option value="">전체 (' + totalStock.toLocaleString() + ')</option>';
+    stocks.forEach(s => {
+      const expLabel = s[2] === '비관리' ? '비관리' : s[2];
+      const selected = item.selectedExp === s[2] ? 'selected' : '';
+      expOptions += `<option value="${s[2]}" ${selected}>${expLabel} (${s[3].toLocaleString()}개)</option>`;
+    });
+
     const div = document.createElement('div');
     div.className = 'comp-item';
     div.innerHTML = `
@@ -1186,13 +1203,21 @@ function refreshEditor(key) {
         <div class="comp-name">${item.name}</div>
         <div class="comp-price">${fmt(item.price)}</div>
       </div>
+      <div style="min-width:120px;">
+        <div style="font-size:9px;color:var(--gray3);margin-bottom:2px;">유통기한 (재고)</div>
+        <select style="width:100%;font-size:11px;padding:3px 4px;border:1px solid ${isShort?'var(--red)':'var(--gray4)'};border-radius:3px;background:${isShort?'#fff5f5':'white'};"
+          onchange="updExp('${key}',${idx},this.value)">
+          ${expOptions}
+        </select>
+        ${isShort ? '<div style="font-size:9px;color:var(--red);margin-top:1px;">⚠ 재고 부족</div>' : ''}
+      </div>
       <div style="text-align:center;min-width:40px;">
         <div style="font-size:9px;color:var(--gray3);">세트당</div>
         <input type="number" class="comp-qty" value="${item.qty}" min="1" onchange="updQty('${key}',${idx},this.value)">
       </div>
       <div style="text-align:center;min-width:48px;">
         <div style="font-size:9px;color:var(--gray3);">필요수량</div>
-        <div style="font-size:14px;font-weight:900;color:var(--red);">${needed}</div>
+        <div style="font-size:14px;font-weight:900;color:${isShort?'var(--red)':'var(--black)'};">${needed}</div>
       </div>
       <label class="comp-gift">
         <input type="checkbox" ${item.gift?'checked':''} onchange="updGift('${key}',${idx},this.checked)"> 증정
@@ -1206,6 +1231,7 @@ function refreshEditor(key) {
 
 function updQty(key, idx, val) { getEditor(key).items[idx].qty = parseInt(val)||1; refreshEditor(key); }
 function updGift(key, idx, val) { getEditor(key).items[idx].gift = val; }
+function updExp(key, idx, val) { getEditor(key).items[idx].selectedExp = val || ''; }
 function delComp(key, idx) { getEditor(key).items.splice(idx,1); refreshEditor(key); }
 
 function refreshSummary(key) {
@@ -1267,6 +1293,15 @@ async function savePlan(key, channel) {
   renderPlanCards(key, channel);
   renderIntegrated();
   alert(`"${name}" 저장 완료!`);
+  // 저장 후 에디터 자동 초기화 (confirm 없이)
+  editors[key] = { items: [], type: '세트' };
+  document.getElementById(`planName_${key}`).value = '';
+  document.getElementById(`planQty_${key}`).value = 1;
+  document.getElementById(`discRate_${key}`).value = 28;
+  setType(key, '세트');
+  refreshEditor(key);
+  currentPlanId = null;
+  renderPlanCards(key, PLAN_CHANNELS[key]);
 }
 
 function newPlan(channel) {
@@ -1296,7 +1331,7 @@ function loadPlan(key, id) {
 function renderPlanCards(key, channel) {
   const el = document.getElementById(`planCards_${key}`);
   if(!el) return;
-  const chanPlans = plans.filter(p => p.channel === channel);
+  const chanPlans = plans.filter(p => p.channel === channel && !p.closed);
   if(chanPlans.length === 0) {
     el.innerHTML = '<div style="font-size:12px;color:var(--gray3);padding:16px;text-align:center;">저장된 기획 없음</div>';
     return;
@@ -1382,25 +1417,32 @@ function loadXLSX(cb) {
 // 관리 엑셀
 function exportMgmt(chanPlans, channel) {
   const wb = XLSX.utils.book_new();
-  const rows = [['NO','기획명','채널','유형','상품명','관리코드','단가','세트당수량','기획수량','필요수량','증정여부','할인율','기획가(1세트)']];
+  const rows = [['NO','기획명','채널','유형','관리코드','상품명','유통기한','단가','세트당수량','기획수량','필요수량','증정여부','할인율','기획가(1세트)']];
+  const merges = [];
+  let rowNum = 1;
   chanPlans.forEach((p, pi) => {
     const sq = p.planQty || 1;
+    const startRow = rowNum;
     p.items.forEach((item, ii) => {
       rows.push([
-        ii===0 ? pi+1 : '',
-        ii===0 ? p.name : '',
-        ii===0 ? channel : '',
-        ii===0 ? p.type : '',
-        item.name, item.code, item.price,
-        item.qty, sq, item.qty * sq,
+        pi+1, p.name, channel, p.type,
+        item.code, item.name, item.selectedExp || '전체',
+        item.price, item.qty, sq, item.qty * sq,
         item.gift ? '증정' : '',
-        ii===0 ? p.discount+'%' : '',
-        ii===0 ? p.sale : ''
+        p.discount+'%', p.sale
       ]);
+      rowNum++;
     });
+    const endRow = rowNum - 1;
+    if(endRow > startRow) {
+      [0,1,2,3,12,13].forEach(col => {
+        merges.push({ s:{r:startRow,c:col}, e:{r:endRow,c:col} });
+      });
+    }
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [5,14,10,8,22,12,10,8,8,8,8,8,12].map(w=>{return{wch:w}});
+  ws['!merges'] = merges;
+  ws['!cols'] = [5,14,10,8,12,22,12,10,8,8,8,8,8,12].map(w=>{return{wch:w}});
   XLSX.utils.book_append_sheet(wb, ws, '관리');
   XLSX.writeFile(wb, `유스트_${channel}_관리_${today()}.xlsx`);
 }
@@ -1427,18 +1469,19 @@ function exportLogistics(chanPlans, channel) {
   chanPlans.forEach(p => {
     const sq = p.planQty || 1;
     p.items.forEach(item => {
-      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0 };
-      merged[item.code].total += item.qty * sq;
+      const expKey = item.code + '||' + (item.selectedExp || '전체');
+      if(!merged[expKey]) merged[expKey] = { code: item.code, name: item.name, exp: item.selectedExp || '전체', total: 0 };
+      merged[expKey].total += item.qty * sq;
     });
   });
   const wb = XLSX.utils.book_new();
-  const rows = [['관리코드','제품명','총 필요수량']];
-  Object.entries(merged).sort((a,b) => a[0].localeCompare(b[0])).forEach(([code,d]) => {
-    rows.push([code, d.name, d.total]);
+  const rows = [['관리코드','제품명','유통기한','총 필요수량']];
+  Object.values(merged).sort((a,b) => a.code.localeCompare(b.code) || a.exp.localeCompare(b.exp)).forEach(d => {
+    rows.push([d.code, d.name, d.exp, d.total]);
   });
-  rows.push(['','합계', Object.values(merged).reduce((s,d)=>s+d.total,0)]);
+  rows.push(['','','합계', Object.values(merged).reduce((s,d)=>s+d.total,0)]);
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:12},{wch:24},{wch:12}];
+  ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, '물류');
   XLSX.writeFile(wb, `유스트_${channel}_물류_${today()}.xlsx`);
 }
@@ -1590,7 +1633,10 @@ function showEventDetail(gkey, g) {
   g.plans.forEach(p => {
     const sq = p.planQty || 1;
     p.items.forEach(item => {
-      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0, giftTotal: 0 };
+      if(!merged[item.code]) merged[item.code] = { name: item.name, total: 0, giftTotal: 0, exps: {} };
+      const expLabel = item.selectedExp || '전체';
+      if(!merged[item.code].exps[expLabel]) merged[item.code].exps[expLabel] = 0;
+      merged[item.code].exps[expLabel] += item.qty * sq;
       if(item.gift) merged[item.code].giftTotal += item.qty * sq;
       else merged[item.code].total += item.qty * sq;
     });
@@ -1703,13 +1749,14 @@ function downloadLogisticsFromDetail(data, eventName) {
   if(!data || data.length === 0) { alert('데이터가 없습니다.'); return; }
   loadXLSX(() => {
     const wb = XLSX.utils.book_new();
-    const rows = [['관리코드','상품명','카테고리','기획수량','증정수량']];
+    const rows = [['관리코드','상품명','카테고리','유통기한','기획수량','증정수량']];
     data.forEach(([code, d]) => {
-      rows.push([code, d.name, d.cat, d.total||0, d.giftTotal||0]);
+      const exps = d.exps ? Object.keys(d.exps).sort().join(', ') : '';
+      rows.push([code, d.name, d.cat, exps || '전체', d.total||0, d.giftTotal||0]);
     });
-    rows.push(['','','합계', data.reduce((s,[,d])=>s+(d.total||0),0), data.reduce((s,[,d])=>s+(d.giftTotal||0),0)]);
+    rows.push(['','','','합계', data.reduce((s,[,d])=>s+(d.total||0),0), data.reduce((s,[,d])=>s+(d.giftTotal||0),0)]);
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:10},{wch:10}];
+    ws['!cols'] = [{wch:12},{wch:24},{wch:12},{wch:14},{wch:10},{wch:10}];
     XLSX.utils.book_append_sheet(wb, ws, '물류취합');
     XLSX.writeFile(wb, `유스트_${eventName}_물류_${today()}.xlsx`);
   });
