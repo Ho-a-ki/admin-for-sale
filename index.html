@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- saved from url=(0056)file:///C:/Users/Samsung/Downloads/juist_planning_2.html -->
+<!-- saved from url=(0056)file:///C:/Users/Samsung/Downloads/juist_planning_3.html -->
 <html lang="ko"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JUST 기획 관리</title>
-<link href="./JUST 기획 관리_files/css2" rel="stylesheet">
+<link href="./index_files/css2" rel="stylesheet">
 <style>
 :root {
   --red: #D2001A;
@@ -4311,7 +4311,7 @@ function renderPlanSearch(key) {
   filtered.forEach(p => {
     const div = document.createElement('div');
     div.className = 'prod-item';
-    div.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="prod-item-name">${p[1]}</span><div style="flex-shrink:0;text-align:right;"><div class="prod-item-price">${fmt(p[4])}</div><div style="font-size:10px;color:var(--gray3);">${EXPIRY[p[0]] || ''}</div></div></div>`;
+    div.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span class="prod-item-name">${p[1]}</span><span class="prod-item-price">${fmt(p[4])}</span></div>`;
     div.onclick = () => addToEditor(key, p);
     list.appendChild(div);
   });
